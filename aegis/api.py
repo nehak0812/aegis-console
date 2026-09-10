@@ -133,24 +133,40 @@ def search(q: str = Query(..., min_length=2)):
 # ------------------------------------------------------------------ prevent
 # Controls the surface scan already measures for every organisation. Reported as adoption
 # percentages across monitored organisations — never as a score, and never ranked.
+#
+# Each control carries an `applies` test as well as a `has` test. A check that has not run
+# for an organisation is excluded from both sides of the percentage rather than counted as a
+# failure: "not measured yet" is not the same finding as "not in place", and conflating them
+# would be exactly the invented data this platform refuses to produce. It matters most for a
+# newly added check, where nearly every organisation is simply still in the scan queue.
 CONTROLS = [
     ("dmarc_enforced", "DMARC enforced (p=quarantine or reject)", "Email spoofing",
+     lambda h, a: True,
      lambda h, a: (h.get("dmarc") or {}).get("p") in ("quarantine", "reject")),
     ("spf_strict", "SPF ends in -all", "Email spoofing",
+     lambda h, a: True,
      lambda h, a: (h.get("spf") or {}).get("all") == "-"),
     ("dkim", "DKIM key published", "Email tampering",
+     lambda h, a: True,
      lambda h, a: bool(h.get("dkim_selectors"))),
     ("mta_sts", "MTA-STS policy", "Mail interception",
+     lambda h, a: True,
      lambda h, a: bool(h.get("mta_sts"))),
     ("tls_rpt", "TLS reporting", "Undetected mail TLS failure",
+     lambda h, a: True,
      lambda h, a: bool(h.get("tls_rpt"))),
     ("dnssec", "DNSSEC signed", "DNS forgery",
+     lambda h, a: True,
      lambda h, a: bool(h.get("dnssec"))),
     ("caa", "CAA record", "Certificate mis-issuance",
+     lambda h, a: True,
      lambda h, a: bool(h.get("caa"))),
     ("ns_redundant", "DNS served by more than one provider", "Single-provider outage",
-     lambda h, a: bool(h.get("ns")) and not prevent.ns_single_provider(h.get("ns"))),
+     lambda h, a: bool(h.get("ns")),
+     lambda h, a: not prevent.ns_single_provider(h.get("ns"))),
+    # only counts organisations whose registry record has actually been read
     ("domain_locked", "Registrar transfer lock", "Domain hijack",
+     lambda h, a: a.get("rdap") is not None,
      lambda h, a: bool((a.get("rdap") or {}).get("locked"))),
 ]
 
@@ -188,17 +204,22 @@ def control_adoption(rows=None) -> list[dict]:
 
 def _adoption(rows) -> list[dict]:
     out = []
-    for cid, label, prevents, test in CONTROLS:
+    for cid, label, prevents, applies, test in CONTROLS:
         by_sector: dict[str, list[int]] = {}
-        n = 0
+        n = measured = 0
         for _, sector, at in rows:
-            ok = 1 if test(at.get("hygiene") or {}, at) else 0
+            h = at.get("hygiene") or {}
+            if not applies(h, at):
+                continue                      # not measured for this organisation — excluded entirely
+            measured += 1
+            ok = 1 if test(h, at) else 0
             n += ok
             g = by_sector.setdefault(sector, [0, 0])
             g[0] += ok
             g[1] += 1
-        out.append({"id": cid, "label": label, "prevents": prevents, "adopted": n, "total": len(rows),
-                    "pct": round(100 * n / len(rows)) if rows else 0,
+        out.append({"id": cid, "label": label, "prevents": prevents, "adopted": n, "total": measured,
+                    "unmeasured": len(rows) - measured,
+                    "pct": round(100 * n / measured) if measured else None,
                     "by_sector": {k: {"adopted": v[0], "total": v[1], "pct": round(100 * v[0] / v[1])} for k, v in sorted(by_sector.items()) if v[1] >= 3}})
     return out
 
@@ -495,10 +516,12 @@ def _org_prevent(o: dict, dom: dict | None) -> dict:
     sector = o.get("sector") or "Unknown"
     adoption = {c["id"]: c for c in control_adoption()}
     out = []
-    for cid, label, prevents, test in CONTROLS:
+    for cid, label, prevents, applies, test in CONTROLS:
         a = adoption[cid]
         peers = a["by_sector"].get(sector)
-        out.append({"id": cid, "label": label, "prevents": prevents, "has": bool(test(hyg, at)),
+        measured = bool(applies(hyg, at))
+        out.append({"id": cid, "label": label, "prevents": prevents,
+                    "measured": measured, "has": bool(test(hyg, at)) if measured else None,
                     "estate_pct": a["pct"], "sector": sector if peers else None,
                     "sector_pct": peers["pct"] if peers else None, "sector_n": peers["total"] if peers else None})
     return {"scanned": True, "sector": sector, "controls": out}

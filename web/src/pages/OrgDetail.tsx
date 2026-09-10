@@ -219,13 +219,16 @@ export default function OrgDetail() {
               <Table rows={prevent.controls} max={20} cols={[
                 { key: 'label', label: 'Control' },
                 { key: 'prevents', label: 'Prevents', render: (c: any) => <span className="muted">{gloss(c.prevents)}</span> },
-                { key: 'has', label: 'This organisation', width: 130, render: (c: any) => c.has
-                  ? <span className="pill">in place</span>
-                  : <span className="pill" style={{ color: 'var(--medium)' }}>not in place</span> },
+                { key: 'has', label: 'This organisation', width: 145, render: (c: any) => !c.measured
+                  ? <span className="muted" title="This check has not run for this organisation yet — it is not a finding either way">not checked yet</span>
+                  : c.has ? <span className="pill">in place</span>
+                    : <span className="pill" style={{ color: 'var(--medium)' }}>not in place</span> },
                 { key: 'sector_pct', label: 'Sector', width: 120, num: true,
-                  render: (c: any) => c.sector_pct === null ? <span className="muted">—</span>
+                  render: (c: any) => c.sector_pct === null || c.sector_pct === undefined ? <span className="muted">—</span>
                     : <span title={`${c.sector_pct}% of ${c.sector_n} monitored ${c.sector} organisations`}>{c.sector_pct}%</span> },
-                { key: 'estate_pct', label: 'All monitored', width: 130, num: true, render: (c: any) => <span className="muted">{c.estate_pct}%</span> },
+                { key: 'estate_pct', label: 'All monitored', width: 130, num: true,
+                  render: (c: any) => c.estate_pct === null || c.estate_pct === undefined
+                    ? <span className="muted">—</span> : <span className="muted">{c.estate_pct}%</span> },
               ]} />)}
           </Card>
 
