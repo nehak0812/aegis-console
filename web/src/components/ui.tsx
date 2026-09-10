@@ -1,5 +1,5 @@
-import { ReactNode, useMemo, useState } from 'react'
-import { AlertOctagon, AlertTriangle, AlertCircle, Info, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react'
+import { ReactNode, useMemo, useState, useRef, useEffect } from 'react'
+import { AlertOctagon, AlertTriangle, AlertCircle, Info, ExternalLink, ChevronDown, ChevronUp, X, Check } from 'lucide-react'
 import { useApi, Level } from '../lib/api'
 import { SEV_COLOR, SEV_LABEL, SEV_ORDER } from '../lib/chartTheme'
 import { ago, host } from '../lib/format'
@@ -158,4 +158,64 @@ export function Table<T>({ rows, cols, onRow, initialSort, max = 500, empty }: {
 
 export function Legend({ items }: { items: { label: string; color: string }[] }) {
   return <div className="legend">{items.map(i => <span key={i.label}><i style={{ background: i.color }} />{i.label}</span>)}</div>
+}
+
+export type Option = { id: string; label?: string; count?: number }
+
+/** Checkbox dropdown for filters that accept several values at once. */
+export function MultiSelect({ label, options, value, onChange, width = 190, searchAfter = 10 }:
+  { label: string; options: Option[]; value: string[]; onChange: (v: string[]) => void; width?: number; searchAfter?: number }) {
+  const [open, setOpen] = useState(false)
+  const [find, setFind] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', away); document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc) }
+  }, [open])
+  useEffect(() => { if (!open) setFind('') }, [open])
+
+  const shown = useMemo(() => {
+    const f = find.trim().toLowerCase()
+    return f ? options.filter(o => (o.label ?? o.id).toLowerCase().includes(f)) : options
+  }, [options, find])
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter(v => v !== id) : [...value, id])
+  const text = !value.length ? label
+    : value.length === 1 ? (options.find(o => o.id === value[0])?.label ?? value[0])
+      : `${value.length} selected`
+
+  return (
+    <div className="multi" ref={ref} style={{ width }}>
+      <button className={`multi-btn${value.length ? ' on' : ''}`} onClick={() => setOpen(o => !o)} title={value.length ? value.map(v => options.find(o => o.id === v)?.label ?? v).join(', ') : label}>
+        <span className="multi-text">{text}</span>
+        {value.length > 0 && <X size={13} className="multi-x" role="button" aria-label={`Clear ${label}`}
+          onClick={e => { e.stopPropagation(); onChange([]); setOpen(false) }} />}
+        <ChevronDown size={13} className="multi-caret" />
+      </button>
+      {open && (
+        <div className="multi-menu">
+          {options.length > searchAfter && (
+            <input className="multi-find" autoFocus value={find} placeholder="Filter…" onChange={e => setFind(e.target.value)} />
+          )}
+          <div className="multi-list">
+            {!shown.length && <div className="muted" style={{ padding: '6px 8px', fontSize: 12 }}>No match.</div>}
+            {shown.map(o => {
+              const on = value.includes(o.id)
+              return (
+                <button key={o.id} className={`multi-opt${on ? ' on' : ''}`} onClick={() => toggle(o.id)}>
+                  <i className="multi-box">{on && <Check size={11} />}</i>
+                  <span className="multi-opt-label">{o.label ?? o.id}</span>
+                  {o.count != null && <b>{o.count}</b>}
+                </button>
+              )
+            })}
+          </div>
+          {value.length > 0 && <button className="multi-clear" onClick={() => onChange([])}>Clear {value.length} selected</button>}
+        </div>
+      )}
+    </div>
+  )
 }

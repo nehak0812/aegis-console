@@ -34,9 +34,13 @@ export function useApi<T = any>(path: string | null, every = 60) {
   })
 }
 
-export function qs(params: Record<string, string | number | undefined | null | boolean>) {
+/** Arrays become repeated keys (?sector=A&sector=B), which is what the multi-select filters send. */
+export function qs(params: Record<string, string | number | undefined | null | boolean | string[]>) {
   const u = new URLSearchParams()
-  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '' && v !== false) u.set(k, String(v))
+  for (const [k, v] of Object.entries(params)) {
+    if (Array.isArray(v)) v.forEach(item => item !== '' && u.append(k, item))
+    else if (v !== undefined && v !== null && v !== '' && v !== false) u.set(k, String(v))
+  }
   const s = u.toString()
   return s ? `?${s}` : ''
 }

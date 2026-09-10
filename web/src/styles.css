@@ -223,3 +223,31 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cat-tile.on { border-color: var(--accent); background: var(--accent-wash); }
 .kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--hair-2); border-bottom-width: 2px; padding: 0 5px; border-radius: 4px; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* ---------- multi-select filter ---------- */
+.multi { position: relative; }
+.multi-btn { width: 100%; display: flex; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--hair);
+  border-radius: 8px; padding: 6px 10px; color: var(--ink); cursor: pointer; font: inherit; text-align: left; }
+.multi-btn:hover { border-color: var(--accent); }
+.multi-btn.on { border-color: var(--accent); background: var(--accent-wash); }
+.multi-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.multi-btn .multi-caret { flex: none; color: var(--muted); }
+.multi-btn .multi-x { flex: none; color: var(--muted); border-radius: 3px; }
+.multi-btn .multi-x:hover { color: var(--ink); background: var(--raised-2); }
+.multi-menu { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; min-width: 100%; width: max-content; max-width: 320px;
+  background: var(--raised); border: 1px solid var(--hair-2); border-radius: 10px; padding: 6px; box-shadow: var(--shadow); }
+.multi-find { width: 100%; background: var(--surface); border: 1px solid var(--hair); border-radius: 6px; padding: 5px 8px;
+  color: var(--ink); outline: none; margin-bottom: 6px; font: inherit; }
+.multi-find:focus { border-color: var(--accent); }
+.multi-list { max-height: 280px; overflow-y: auto; }
+.multi-opt { width: 100%; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px;
+  background: none; border: 0; color: var(--ink); cursor: pointer; font: inherit; text-align: left; }
+.multi-opt:hover { background: var(--raised-2); }
+.multi-opt-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.multi-opt b { color: var(--muted); font-weight: 500; font-size: 12px; }
+.multi-box { width: 14px; height: 14px; flex: none; border: 1px solid var(--hair-2); border-radius: 4px; display: inline-flex;
+  align-items: center; justify-content: center; color: #fff; }
+.multi-opt.on .multi-box { background: var(--accent); border-color: var(--accent); }
+.multi-clear { width: 100%; margin-top: 6px; padding: 5px 8px; border-radius: 6px; background: none; border: 0;
+  color: var(--muted); cursor: pointer; font: inherit; text-align: left; }
+.multi-clear:hover { background: var(--raised-2); color: var(--ink); }

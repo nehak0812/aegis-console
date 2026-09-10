@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Body, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from aegis import ROOT, db, rating, scheduler
@@ -268,17 +268,32 @@ def _posture_map() -> dict:
     return agg
 
 
-@app.get("/api/orgs")
-def orgs(q: str | None = None, sector: str | None = None, country: str | None = None, index: str | None = None, level: str | None = None):
+UNKNOWN_SECTOR, UNKNOWN_COUNTRY = "Unknown", "—"  # the labels the facets use for rows with no value
+
+
+def _in_clause(col: str, values: list[str], blank_label: str) -> tuple[str, list]:
+    """OR-of-equals for a multi-select filter, treating the facet's blank label as IS NULL."""
+    picked = [v for v in values if v != blank_label]
+    parts, p = [], []
+    if picked:
+        parts.append(f"{col} IN ({ph(len(picked))})"); p += picked
+    if len(picked) != len(values):
+        parts.append(f"({col} IS NULL OR {col}='')")
+    return " AND (" + " OR ".join(parts) + ")", p
+
+
+def _org_rows(q=None, sector=None, country=None, index=None, level=None):
+    """Rows for the organisations table. Shared by the JSON list and the spreadsheet export."""
     sql, p = "SELECT id, name, ticker, domain, country, city, sector, industry, indices, lat, lon, deep_scanned, tier FROM org WHERE 1=1", []
     if q:
         sql += " AND (name LIKE ? OR domain LIKE ? OR ticker LIKE ?)"; p += [f"%{q}%"] * 3
     if sector:
-        sql += " AND sector=?"; p.append(sector)
+        s, sp = _in_clause("sector", sector, UNKNOWN_SECTOR); sql += s; p += sp
     if country:
-        sql += " AND country=?"; p.append(country)
+        s, cp = _in_clause("country", country, UNKNOWN_COUNTRY); sql += s; p += cp
     if index:
-        sql += " AND indices LIKE ?"; p.append(f"%{index}%")
+        # indices is a JSON array, so each pick is a substring test
+        sql += " AND (" + " OR ".join(["indices LIKE ?"] * len(index)) + ")"; p += [f"%{i}%" for i in index]
     rows = db.q(sql + " ORDER BY name", p)
     pm = _posture_map()
     inc = Counter(r["org_id"] for r in db.q("SELECT m.org_id FROM impact m JOIN incident i ON i.id=m.incident_id WHERE m.link_type != 'TARGETING' AND i.last_seen > ?", (ts(30),)))
@@ -291,9 +306,73 @@ def orgs(q: str | None = None, sector: str | None = None, country: str | None = 
         r["incidents_30d"] = inc.get(r["id"], 0)
     if level:
         rows = [r for r in rows if r["state"] == level]
-    facets = {"sector": Counter(r["sector"] or "Unknown" for r in rows), "country": Counter(r["country"] or "—" for r in rows),
+    return rows
+
+
+@app.get("/api/orgs")
+def orgs(q: str | None = None, sector: list[str] | None = Query(None), country: list[str] | None = Query(None),
+         index: list[str] | None = Query(None), level: str | None = None):
+    rows = _org_rows(q, sector, country, index, level)
+    facets = {"sector": Counter(r["sector"] or UNKNOWN_SECTOR for r in rows), "country": Counter(r["country"] or UNKNOWN_COUNTRY for r in rows),
               "level": Counter(r["state"] for r in rows)}
     return {"orgs": rows, "facets": facets}
+
+
+EXPORT_COLUMNS = [
+    ("Organisation", lambda r: r["name"]),
+    ("Ticker", lambda r: r["ticker"]),
+    ("Domain", lambda r: r["domain"]),
+    ("Level", lambda r: r["level"].title() if r["level"] else ("No findings" if r["state"] == "clear" else "Scan queued")),
+    ("Critical", lambda r: r["counts"].get("critical", 0)),
+    ("High", lambda r: r["counts"].get("high", 0)),
+    ("Medium", lambda r: r["counts"].get("medium", 0)),
+    ("Low", lambda r: r["counts"].get("low", 0)),
+    ("Linked incidents (30d)", lambda r: r["incidents_30d"]),
+    ("Sector", lambda r: r["sector"]),
+    ("Industry", lambda r: r["industry"]),
+    ("Country", lambda r: r["country"]),
+    ("City", lambda r: r["city"]),
+    ("Lists", lambda r: ", ".join(r["indices"]) if isinstance(r["indices"], list) else (r["indices"] or "")),
+    ("Surface scan", lambda r: (r["deep_scanned"] or "")[:19].replace("T", " ") or "queued"),
+    ("AEGIS id", lambda r: r["id"]),
+]
+
+
+# NOTE: must stay above /api/orgs/{oid}, or "export" is read as an organisation id.
+@app.get("/api/orgs/export")
+def orgs_export(q: str | None = None, sector: list[str] | None = Query(None), country: list[str] | None = Query(None),
+                index: list[str] | None = Query(None), level: str | None = None):
+    """The organisations table as .xlsx, honouring whatever filters the console has applied."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    rows = _org_rows(q, sector, country, index, level)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Organisations"
+    ws.append([c[0] for c in EXPORT_COLUMNS])
+    for r in rows:
+        ws.append([fn(r) for _, fn in EXPORT_COLUMNS])
+
+    head = Font(bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="1F3350")
+    for i in range(1, len(EXPORT_COLUMNS) + 1):
+        cell = ws.cell(row=1, column=i)
+        cell.font, cell.fill = head, fill
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+        longest = max([len(str(EXPORT_COLUMNS[i - 1][0]))] + [len(str(ws.cell(row=n, column=i).value or "")) for n in range(2, min(ws.max_row, 400) + 1)])
+        ws.column_dimensions[get_column_letter(i)].width = min(42, max(10, longest + 2))
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(EXPORT_COLUMNS))}{ws.max_row}"
+
+    buf = BytesIO()
+    wb.save(buf)
+    name = f"aegis-organisations-{datetime.now(UTC).strftime('%Y-%m-%d')}.xlsx"
+    return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/api/orgs/{oid}")

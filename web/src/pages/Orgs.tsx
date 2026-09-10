@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus, Search } from 'lucide-react'
+import { Plus, Search, Download } from 'lucide-react'
 import { useApi, qs, api } from '../lib/api'
-import { Card, Sev, SevBar, Table, Seg, Empty, When } from '../components/ui'
+import { Card, Sev, SevBar, Table, Seg, Empty, When, MultiSelect } from '../components/ui'
 import WorldMap from '../components/WorldMap'
 import { HBar } from '../components/charts'
 import { SEV_COLOR } from '../lib/chartTheme'
@@ -50,15 +50,22 @@ export default function Orgs() {
   const [sp] = useSearchParams()
   const [q, setQ] = useState('')
   const [level, setLevel] = useState(sp.get('level') || '')
-  const [sector, setSector] = useState('')
-  const [country, setCountry] = useState('')
-  const [index, setIndex] = useState('')
+  const [sector, setSector] = useState<string[]>([])
+  const [country, setCountry] = useState<string[]>([])
+  const [index, setIndex] = useState<string[]>([])
   const [adding, setAdding] = useState(false)
-  const { data } = useApi<any>(`/orgs${qs({ q: q.length > 1 ? q : '', level, sector, country, index })}`, 120)
+  // one filter set drives the table and the spreadsheet, so an export always matches what is on screen
+  const filters = { q: q.length > 1 ? q : '', level, sector, country, index }
+  const { data } = useApi<any>(`/orgs${qs(filters)}`, 120)
   const all = useApi<any>('/orgs', 300).data
   const rows = data?.orgs || []
-  const sectors = useMemo(() => Object.keys(all?.facets?.sector || {}).sort(), [all])
-  const countries = useMemo(() => Object.entries(all?.facets?.country || {}).sort((a: any, b: any) => b[1] - a[1]).map(([c]) => c), [all])
+  // options come from the unfiltered universe, so narrowing one filter never hides the rest
+  const sectorOpts = useMemo(() => Object.entries(all?.facets?.sector || {})
+    .sort((a, b) => a[0].localeCompare(b[0])).map(([id, count]) => ({ id, count: count as number })), [all])
+  const countryOpts = useMemo(() => Object.entries(all?.facets?.country || {})
+    .sort((a: any, b: any) => b[1] - a[1]).map(([id, count]) => ({ id, label: countryName(id), count: count as number })), [all])
+  const indexOpts = ['S&P 500', 'FTSE 100', 'DAX 40', 'CAC 40', 'EURO STOXX 50', 'Added by analyst'].map(id => ({ id }))
+  const chosen = sector.length + country.length + index.length + (level ? 1 : 0) + (q.length > 1 ? 1 : 0)
   const lv = data?.facets?.level || {}
 
   return (
@@ -91,7 +98,7 @@ export default function Orgs() {
               </div>
             ))}
             <div className="muted" style={{ fontSize: 12 }}>By sector</div>
-            <HBar data={Object.entries(data?.facets?.sector || {}).map(([s, n]) => ({ s, n })).sort((a: any, b: any) => b.n - a.n).slice(0, 8)} label="s" value="n" onClick={d => setSector(d.s)} />
+            <HBar data={Object.entries(data?.facets?.sector || {}).map(([s, n]) => ({ s, n })).sort((a: any, b: any) => b.n - a.n).slice(0, 8)} label="s" value="n" onClick={d => setSector([d.s])} />
           </div>
         </Card>
       </div>
@@ -99,9 +106,16 @@ export default function Orgs() {
       <div className="filters">
         <div className="search" style={{ maxWidth: 280 }}><Search size={14} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="name, ticker, domain…" /></div>
         <Seg options={[{ id: '', label: 'All' }, { id: 'critical', label: 'Critical' }, { id: 'high', label: 'High' }, { id: 'medium', label: 'Medium' }]} value={level as any} onChange={setLevel as any} />
-        <select className="txt" value={sector} onChange={e => setSector(e.target.value)}><option value="">All sectors</option>{sectors.map(s => <option key={s}>{s}</option>)}</select>
-        <select className="txt" value={country} onChange={e => setCountry(e.target.value)}><option value="">All countries</option>{countries.map(c => <option key={c} value={c}>{countryName(c)}</option>)}</select>
-        <select className="txt" value={index} onChange={e => setIndex(e.target.value)}><option value="">All lists</option>{['S&P 500', 'FTSE 100', 'DAX 40', 'CAC 40', 'EURO STOXX 50', 'Added by analyst'].map(i => <option key={i}>{i}</option>)}</select>
+        <MultiSelect label="All sectors" options={sectorOpts} value={sector} onChange={setSector} width={200} />
+        <MultiSelect label="All countries" options={countryOpts} value={country} onChange={setCountry} width={200} />
+        <MultiSelect label="All lists" options={indexOpts} value={index} onChange={setIndex} width={185} />
+        {chosen > 1 && (
+          <button className="btn" onClick={() => { setQ(''); setLevel(''); setSector([]); setCountry([]); setIndex([]) }}>Reset filters</button>
+        )}
+        <a className="btn" style={{ marginLeft: 'auto' }} href={`/api/orgs/export${qs(filters)}`}
+          title={`Download ${rows.length} organisation${rows.length === 1 ? '' : 's'} as an Excel workbook`}>
+          <Download size={14} />Excel ({rows.length})
+        </a>
       </div>
       <Card className="flush">
         {!rows.length ? <Empty>No organisations match.</Empty> : (
