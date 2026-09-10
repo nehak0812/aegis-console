@@ -56,6 +56,10 @@ function Action({ f, book }: { f: any; book: any }) {
   )
 }
 
+// preventable findings are ordered worst-first, then by how much work the fix is
+const SEV_RANK = ['critical', 'high', 'medium', 'low']
+const EFFORT_ORDER: Record<string, number> = { S: 0, M: 1, L: 2 }
+
 function FindingList({ rows, empty }: { rows: any[]; empty?: string }) {
   if (!rows.length) return <Empty>{empty || 'No findings in this category.'}</Empty>
   return (
@@ -89,6 +93,17 @@ export default function OrgDetail() {
     for (const f of data?.findings || []) (m[f.category] ||= []).push(f)
     return m
   }, [data])
+  // every hook must run before the loading return below, or the hook count changes between renders
+  const books = usePlaybooks()
+  const actions = useMemo(() => ((data?.findings as any[]) || [])
+    .filter(f => books[f.rule_id])
+    .sort((a, b) => (SEV_RANK.indexOf(a.severity) - SEV_RANK.indexOf(b.severity))
+      || (EFFORT_ORDER[books[a.rule_id].effort] - EFFORT_ORDER[books[b.rule_id].effort])), [data, books])
+  const byOwner = useMemo(() => {
+    const m: Record<string, any[]> = {}
+    for (const f of actions) (m[books[f.rule_id].owner] ||= []).push(f)
+    return Object.entries(m).sort((a, b) => b[1].length - a[1].length)
+  }, [actions, books])
   if (!data) return <div className="muted">Loading organisation…</div>
   const o = data.org, p = data.posture, fp = data.footprint
   const scanned = !!fp.scanned
@@ -100,19 +115,7 @@ export default function OrgDetail() {
   const rdapUrl = d ? `https://rdap.org/domain/${d}` : undefined
   const expiryDays = rdap?.expires ? Math.floor((Date.parse(rdap.expires) - Date.now()) / 86400000) : null
   const lookalikes: any[] = fp.lookalikes || []
-  const books = usePlaybooks()
   const prevent = data.prevent || { scanned: false, controls: [] }
-  // preventable = a finding with a playbook; ordered worst-first, then by how much work it is
-  const EFFORT_ORDER: Record<string, number> = { S: 0, M: 1, L: 2 }
-  const actions = useMemo(() => (data.findings as any[])
-    .filter(f => books[f.rule_id])
-    .sort((a, b) => (['critical', 'high', 'medium', 'low'].indexOf(a.severity) - ['critical', 'high', 'medium', 'low'].indexOf(b.severity))
-      || (EFFORT_ORDER[books[a.rule_id].effort] - EFFORT_ORDER[books[b.rule_id].effort])), [data.findings, books])
-  const byOwner = useMemo(() => {
-    const m: Record<string, any[]> = {}
-    for (const f of actions) (m[books[f.rule_id].owner] ||= []).push(f)
-    return Object.entries(m).sort((a, b) => b[1].length - a[1].length)
-  }, [actions, books])
   const dohUrl = (n: string, t: string) => `https://dns.google/resolve?name=${n}&type=${t}`
   const stealer = data.leaks.find((l: any) => l.kind === 'stealer')
 
