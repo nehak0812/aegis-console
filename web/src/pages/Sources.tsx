@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react'
 import { CheckCircle2, AlertTriangle, PauseCircle, Loader2, Clock, Play, ChevronRight, ChevronDown } from 'lucide-react'
 import { useApi, api } from '../lib/api'
+import { Gloss, gloss } from '../lib/glossary'
 import { Card, Stat, Sev, SourceLink, When, Tabs, Table } from '../components/ui'
 import { Spark } from '../components/charts'
 import { compact } from '../lib/format'
@@ -31,7 +32,7 @@ export default function Sources() {
         <div>
           <div className="eyebrow">Sources & method</div>
           <h2>Where every record comes from, and how levels are decided</h2>
-          <p>Only free, open sources. Collection is passive: public indexes, registries, feeds and DNS — never a scan or a probe of an organisation, never a purchase, never a credential. Each source runs on its own cadence; a failing source is marked degraded rather than filled with anything invented.</p>
+          <p><Gloss>Only free, open sources. Collection is passive: public indexes, registries, feeds and DNS — never a scan or a probe of an organisation, never a purchase, never a credential. Each source runs on its own cadence; a failing source is marked degraded rather than filled with anything invented.</Gloss></p>
         </div>
       </div>
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', marginBottom: 14 }}>
@@ -49,7 +50,7 @@ export default function Sources() {
                   <Fragment key={s.id}>
                     <tr className="click" onClick={() => setOpen(open === s.id ? null : s.id)}>
                       <td>{open === s.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
-                      <td><b>{s.name}</b><div className="muted" style={{ fontSize: 12 }}>{s.publisher}</div></td>
+                      <td><b>{gloss(s.name)}</b><div className="muted" style={{ fontSize: 12 }}>{s.publisher}</div></td>
                       <td><Status s={s.status} /></td>
                       <td>{s.last_ok ? <When ts={s.last_ok} /> : <span className="muted">—</span>}</td>
                       <td className="num">{compact(s.items_last_run)}</td>
@@ -61,7 +62,7 @@ export default function Sources() {
                     {open === s.id && (
                       <tr><td /><td colSpan={8}>
                         <div className="stack" style={{ padding: '4px 0 10px' }}>
-                          <div className="ink2">{s.notes}</div>
+                          <div className="ink2">{gloss(s.notes)}</div>
                           <div className="row wrap" style={{ gap: 10 }}><SourceLink url={s.homepage} label="Homepage" />{s.url && <SourceLink url={s.url} label="Endpoint" />}<span className="muted">access: {s.access}</span></div>
                           {s.last_error && <div className="why" style={{ borderColor: 'var(--high)' }}><b>Last error:</b> {s.last_error}</div>}
                           {s.feed_health?.length > 0 && (

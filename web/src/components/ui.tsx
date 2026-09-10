@@ -3,6 +3,7 @@ import { AlertOctagon, AlertTriangle, AlertCircle, Info, ExternalLink, ChevronDo
 import { useApi, Level } from '../lib/api'
 import { SEV_COLOR, SEV_LABEL, SEV_ORDER } from '../lib/chartTheme'
 import { ago, host } from '../lib/format'
+import { gloss } from '../lib/glossary'
 
 const SEV_ICON = { critical: AlertOctagon, high: AlertTriangle, medium: AlertCircle, low: Info }
 
@@ -48,8 +49,8 @@ export function Card({ title, sub, right, children, className = '', onClick }: {
     <section className={`card ${onClick ? 'clickable' : ''} ${className}`} onClick={onClick}>
       {(title || right) && (
         <div className="card-h">
-          {title && <h3>{title}</h3>}
-          {sub && <span className="sub">{sub}</span>}
+          {title && <h3>{gloss(title)}</h3>}
+          {sub && <span className="sub">{gloss(sub)}</span>}
           {right && <div className="right">{right}</div>}
         </div>
       )}
@@ -61,9 +62,9 @@ export function Card({ title, sub, right, children, className = '', onClick }: {
 export function Stat({ label, value, hint, hero, onClick }: { label: string; value: ReactNode; hint?: ReactNode; hero?: boolean; onClick?: () => void }) {
   return (
     <div className={`card stat ${hero ? 'hero' : ''} ${onClick ? 'clickable' : ''}`} onClick={onClick}>
-      <span className="label">{label}</span>
+      <span className="label">{gloss(label)}</span>
       <span className="value">{value}</span>
-      {hint && <span className="hint">{hint}</span>}
+      {hint && <span className="hint">{gloss(hint)}</span>}
     </div>
   )
 }
@@ -96,7 +97,7 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
     <div className="tabs" role="tablist">
       {tabs.map(t => (
         <button key={t.id} role="tab" aria-selected={value === t.id} className={value === t.id ? 'on' : ''} onClick={() => onChange(t.id)}>
-          {t.label}{t.count !== undefined && <span className="pill" style={{ padding: '0 6px' }}>{t.count}</span>}
+          {gloss(t.label)}{t.count !== undefined && <span className="pill" style={{ padding: '0 6px' }}>{t.count}</span>}
         </button>
       ))}
     </div>
@@ -138,7 +139,7 @@ export function Table<T>({ rows, cols, onRow, initialSort, max = 500, empty }: {
           <tr>
             {cols.map(c => (
               <th key={c.key} className={c.num ? 'num' : ''} style={{ width: c.width }} onClick={() => setSort(s => [c.key, s && s[0] === c.key && s[1] === 'desc' ? 'asc' : 'desc'])}>
-                {c.label}{sort && sort[0] === c.key && (sort[1] === 'desc' ? <ChevronDown size={11} /> : <ChevronUp size={11} />)}
+                {gloss(c.label)}{sort && sort[0] === c.key && (sort[1] === 'desc' ? <ChevronDown size={11} /> : <ChevronUp size={11} />)}
               </th>
             ))}
           </tr>
@@ -146,7 +147,7 @@ export function Table<T>({ rows, cols, onRow, initialSort, max = 500, empty }: {
         <tbody>
           {sorted.slice(0, max).map((r, i) => (
             <tr key={i} className={onRow ? 'click' : ''} onClick={() => onRow?.(r)}>
-              {cols.map(c => <td key={c.key} className={c.num ? 'num' : ''}>{c.render ? c.render(r) : (r as any)[c.key]}</td>)}
+              {cols.map(c => <td key={c.key} className={c.num ? 'num' : ''}>{c.render ? c.render(r) : gloss((r as any)[c.key])}</td>)}
             </tr>
           ))}
         </tbody>

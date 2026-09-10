@@ -5,6 +5,7 @@ import { ResponsiveTreeMap } from '@nivo/treemap'
 import { motion, AnimatePresence } from 'motion/react'
 import { Network, Boxes, Search } from 'lucide-react'
 import { useApi, qs } from '../lib/api'
+import { Gloss } from '../lib/glossary'
 import { useRange } from '../App'
 import { Card, Sev, Why, Empty, When, SourceLink, Tabs, Seg, Table, SevCounts } from '../components/ui'
 import { HBar } from '../components/charts'
@@ -185,7 +186,7 @@ export default function Incidents() {
         <div>
           <div className="eyebrow">Incidents & impact</div>
           <h2>From an incident to every organisation it could reach</h2>
-          <p>Each incident is clustered from leak sites, filings, dark-web reporting, news and exploitation data. Organisations are linked by five explainable rules: named victim, corporate group, provider dependency (public DNS), exposed product, and sector targeting.</p>
+          <p><Gloss>Each incident is clustered from leak sites, filings, dark-web reporting, news and exploitation data. Organisations are linked by five explainable rules: named victim, corporate group, provider dependency (public DNS), exposed product, and sector targeting.</Gloss></p>
         </div>
       </div>
       <Tabs tabs={[{ id: 'incidents', label: <><Network size={14} />Incidents</>, count: list.length }, { id: 'providers', label: <><Boxes size={14} />Provider concentration</> }]} value={tab} onChange={setTab} />

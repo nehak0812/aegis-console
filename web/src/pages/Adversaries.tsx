@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { Search, ExternalLink } from 'lucide-react'
 import { useApi, qs } from '../lib/api'
+import { Gloss } from '../lib/glossary'
 import { Card, Empty, SourceLink, When, Seg, Table, Stat } from '../components/ui'
 import { HBar } from '../components/charts'
 import WorldMap from '../components/WorldMap'
@@ -88,7 +89,7 @@ export default function Adversaries() {
         <div>
           <div className="eyebrow">Adversaries</div>
           <h2>Who is active, what they target, and who is reporting it</h2>
-          <p>One alias index across naming schemes — CrowdStrike (BEAR, PANDA, KITTEN, CHOLLIMA, SPIDER, JACKAL…), Microsoft weather names, MITRE ATT&CK IDs and MISP — ranked by live activity: reporting mentions and leak-site victims.</p>
+          <p><Gloss>One alias index across naming schemes — CrowdStrike (BEAR, PANDA, KITTEN, CHOLLIMA, SPIDER, JACKAL…), Microsoft weather names, MITRE ATT&CK IDs and MISP — ranked by live activity: reporting mentions and leak-site victims.</Gloss></p>
         </div>
       </div>
       <div className="filters">

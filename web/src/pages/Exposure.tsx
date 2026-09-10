@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ResponsiveHeatMap } from '@nivo/heatmap'
 import { useApi } from '../lib/api'
+import { Gloss } from '../lib/glossary'
 import { useRange } from '../App'
 import { Card, Stat, Sev, Table, Empty, SourceLink, Tabs, Legend } from '../components/ui'
 import { HBar, Columns } from '../components/charts'
@@ -44,7 +45,7 @@ export default function Exposure() {
         <div>
           <div className="eyebrow">Exposure & vulnerabilities</div>
           <h2>Exploited software, exposed services and compromised hosts</h2>
-          <p>CISA KEV, FIRST EPSS, public exploit availability and CVE records set each vulnerability's level by rule. Exposure across the monitored organisations comes from passive indexes only.</p>
+          <p><Gloss>CISA KEV, FIRST EPSS, public exploit availability and CVE records set each vulnerability's level by rule. Exposure across the monitored organisations comes from passive indexes only.</Gloss></p>
         </div>
       </div>
       {cve && <div style={{ marginBottom: 14 }}><CveCard cve={cve} /></div>}

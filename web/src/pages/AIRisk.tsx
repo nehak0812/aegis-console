@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ResponsiveSunburst } from '@nivo/sunburst'
 import { useApi } from '../lib/api'
+import { Gloss } from '../lib/glossary'
 import { Card, Stat, Empty, SourceLink, When, Legend } from '../components/ui'
 import { HBar, Columns } from '../components/charts'
 import { SERIES, nivoTheme, SURFACE, onFill } from '../lib/chartTheme'
@@ -19,7 +20,7 @@ export default function AIRisk() {
         <div>
           <div className="eyebrow">AI risk</div>
           <h2>AI risk through the MIT AI Risk Repository lens</h2>
-          <p>The MIT Domain Taxonomy (7 domains, 24 subdomains) with live counts of catalogued risks, and new AI incident reports classified into it by transparent keyword rules. Cyber-relevant subdomains (2.1, 2.2, 4.1–4.3, 7.3) feed the SOC view.</p>
+          <p><Gloss>The MIT Domain Taxonomy (7 domains, 24 subdomains) with live counts of catalogued risks, and new AI incident reports classified into it by transparent keyword rules. Cyber-relevant subdomains (2.1, 2.2, 4.1–4.3, 7.3) feed the SOC view.</Gloss></p>
         </div>
         <div style={{ marginLeft: 'auto' }}><SourceLink url="https://airisk.mit.edu/" label="MIT AI Risk Repository" /></div>
       </div>

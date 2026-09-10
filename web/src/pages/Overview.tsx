@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { ArrowRight } from 'lucide-react'
 import { useApi } from '../lib/api'
+import { Gloss } from '../lib/glossary'
 import { useRange } from '../App'
 import { Card, Stat, Sev, Empty, When, SourceLink } from '../components/ui'
 import WorldMap from '../components/WorldMap'
@@ -24,7 +25,7 @@ export default function Overview() {
         <div>
           <div className="eyebrow">Situation · last {range} days</div>
           <h2>Cyber risk across {compact(h.monitored)} monitored organisations</h2>
-          <p>Live incidents, who they could reach, and what changed — every figure links to its evidence. Levels are assigned by named rules, not scores.</p>
+          <p><Gloss>Live incidents, who they could reach, and what changed — every figure links to its evidence. Levels are assigned by named rules, not scores.</Gloss></p>
         </div>
       </div>
 

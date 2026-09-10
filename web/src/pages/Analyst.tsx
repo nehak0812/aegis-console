@@ -4,6 +4,7 @@ import { ResponsiveHeatMap } from '@nivo/heatmap'
 import { ResponsiveBump } from '@nivo/bump'
 import { TrendingUp, Repeat, Sparkles } from 'lucide-react'
 import { useApi, qs } from '../lib/api'
+import { Gloss } from '../lib/glossary'
 import { useRange } from '../App'
 import { Card, Stat, Empty, SourceLink, When, Table, Tabs } from '../components/ui'
 import { HBar } from '../components/charts'
@@ -34,7 +35,7 @@ export default function Analyst() {
         <div>
           <div className="eyebrow">Analyst view</div>
           <h2>Key themes, recurring aspects, and who is publishing what</h2>
-          <p>{data.window_items.toLocaleString()} items from vendor research (CrowdStrike, Mandiant, Microsoft, Unit 42, Talos…), government CERTs, security news, dark-web reporting and community channels, tagged by transparent keyword rules. Momentum compares this week with the prior four-week average.</p>
+          <p><Gloss>{data.window_items.toLocaleString()} items from vendor research (CrowdStrike, Mandiant, Microsoft, Unit 42, Talos…), government CERTs, security news, dark-web reporting and community channels, tagged by transparent keyword rules. Momentum compares this week with the prior four-week average.</Gloss></p>
         </div>
       </div>
       <div className="grid g4" style={{ marginBottom: 14 }}>

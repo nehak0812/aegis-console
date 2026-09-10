@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus, Search, Download } from 'lucide-react'
 import { useApi, qs, api } from '../lib/api'
+import { Gloss } from '../lib/glossary'
 import { Card, Sev, SevBar, Table, Seg, Empty, When, MultiSelect } from '../components/ui'
 import WorldMap from '../components/WorldMap'
 import { HBar } from '../components/charts'
@@ -74,7 +75,7 @@ export default function Orgs() {
         <div>
           <div className="eyebrow">Organisations</div>
           <h2>The monitored universe</h2>
-          <p>S&P 500, FTSE 100, DAX 40, CAC 40 and EURO STOXX 50 constituents from public registries, plus organisations you add. Each is assessed across twelve categories; its level is the most severe active finding.</p>
+          <p><Gloss>S&P 500, FTSE 100, DAX 40, CAC 40 and EURO STOXX 50 constituents from public registries, plus organisations you add. Each is assessed across twelve categories; its level is the most severe active finding.</Gloss></p>
         </div>
         <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setAdding(a => !a)}><Plus size={14} />Add organisation</button>
       </div>

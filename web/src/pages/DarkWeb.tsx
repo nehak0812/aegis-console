@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ResponsiveStream } from '@nivo/stream'
 import { useApi } from '../lib/api'
+import { Gloss } from '../lib/glossary'
 import { useRange } from '../App'
 import { Card, Stat, Table, Empty, SourceLink, Tabs, When, Legend } from '../components/ui'
 import { HBar } from '../components/charts'
@@ -27,7 +28,7 @@ export default function DarkWeb() {
         <div>
           <div className="eyebrow">Deep & dark web · forums · chatter</div>
           <h2>What is being claimed, sold, leaked and plotted</h2>
-          <p>Metadata only, from reputable third-party trackers — leak-site monitors, outlets that report forum and market posts, infostealer and breach catalogues, hacktivist target lists and open community chatter. We never visit .onion sites, never store credentials, and label claims as unverified.</p>
+          <p><Gloss>Metadata only, from reputable third-party trackers — leak-site monitors, outlets that report forum and market posts, infostealer and breach catalogues, hacktivist target lists and open community chatter. We never visit .onion sites, never store credentials, and label claims as unverified.</Gloss></p>
         </div>
       </div>
       <div className="grid" style={{ gridTemplateColumns: 'repeat(6, minmax(0,1fr))', marginBottom: 14 }}>

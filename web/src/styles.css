@@ -251,3 +251,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .multi-clear { width: 100%; margin-top: 6px; padding: 5px 8px; border-radius: 6px; background: none; border: 0;
   color: var(--muted); cursor: pointer; font: inherit; text-align: left; }
 .multi-clear:hover { background: var(--raised-2); color: var(--ink); }
+
+/* ---------- glossary ---------- */
+/* abbreviations the console uses in its own voice: hover shows the full form */
+abbr.gloss { text-decoration: underline dotted var(--hair-2); text-underline-offset: 3px; cursor: help; }
+abbr.gloss:hover { text-decoration-color: var(--accent); color: var(--ink); }
+.tbl th abbr.gloss { text-decoration-color: var(--hair-2); }

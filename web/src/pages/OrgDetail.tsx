@@ -6,6 +6,7 @@ import { RefreshCw, CheckCircle2, XCircle, MinusCircle, ExternalLink } from 'luc
 import { useApi, api } from '../lib/api'
 import { Card, Sev, Why, Empty, When, SourceLink, Tabs, Table, SevCounts, Stat, useRules } from '../components/ui'
 import { HBar, Columns } from '../components/charts'
+import { gloss } from '../lib/glossary'
 import { SEV_COLOR, SERIES, nivoTheme, EMPTY, SURFACE, onFill } from '../lib/chartTheme'
 import { countryName, day, compact } from '../lib/format'
 
@@ -20,7 +21,7 @@ function Check({ ok, warn, label, detail, url }: { ok: boolean; warn?: boolean; 
   return (
     <div className="feed-item" style={{ gridTemplateColumns: 'auto 1fr auto' }}>
       <Icon size={16} color={color} />
-      <div><div className="t">{label} <span className="muted" style={{ fontWeight: 400 }}>· {ok ? 'present' : warn ? 'partial' : 'missing'}</span></div>{detail && <div className="m mono" style={{ wordBreak: 'break-all' }}>{detail}</div>}</div>
+      <div><div className="t">{gloss(label)} <span className="muted" style={{ fontWeight: 400 }}>· {ok ? 'present' : warn ? 'partial' : 'missing'}</span></div>{detail && <div className="m mono" style={{ wordBreak: 'break-all' }}>{detail}</div>}</div>
       {url ? <SourceLink url={url} label="DNS record" /> : <span />}
     </div>
   )
