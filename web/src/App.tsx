@@ -51,7 +51,7 @@ function GlobalSearch() {
   return (
     <div className="search">
       <Search size={15} />
-      <input ref={ref} value={q} placeholder="Search organisations, incidents, CVEs, actors, vendors…  ( / )" onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
+      <input ref={ref} value={q} placeholder="Search organisations, incidents, vulnerabilities (CVEs), actors…  ( / )" onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
         onChange={e => { setQ(e.target.value); setSel(0); setOpen(true) }}
         onKeyDown={e => { if (e.key === 'ArrowDown') setSel(s => Math.min(s + 1, results.length - 1)); if (e.key === 'ArrowUp') setSel(s => Math.max(0, s - 1)); if (e.key === 'Enter' && results[sel]) go(results[sel]) }} />
       {open && results.length > 0 && (
