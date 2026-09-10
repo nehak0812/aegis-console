@@ -4,7 +4,7 @@ import { motion } from 'motion/react'
 import { ResponsiveCirclePacking } from '@nivo/circle-packing'
 import { RefreshCw, CheckCircle2, XCircle, MinusCircle, ExternalLink } from 'lucide-react'
 import { useApi, api } from '../lib/api'
-import { Card, Sev, Why, Empty, When, SourceLink, Tabs, Table, SevCounts, Stat, useRules, usePlaybooks } from '../components/ui'
+import { Card, Sev, Conf, Why, Empty, When, SourceLink, Tabs, Table, SevCounts, Stat, useRules, usePlaybooks } from '../components/ui'
 import { HBar, Columns } from '../components/charts'
 import { gloss } from '../lib/glossary'
 import { SEV_COLOR, SERIES, nivoTheme, EMPTY, SURFACE, onFill } from '../lib/chartTheme'
@@ -35,6 +35,7 @@ function Action({ f, book }: { f: any; book: any }) {
     <div className="feed-item" style={{ gridTemplateColumns: '1fr', gap: 6 }}>
       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
         <Sev level={f.severity} rule={f.rule_id} />
+        <Conf level={f.confidence} />
         <b style={{ flex: 1, minWidth: 200 }}>{f.title}</b>
         {book && <span className="pill">{book.owner}</span>}
         {book && <span className="pill" title={`about ${book.effort_label}`}>{book.effort}</span>}
@@ -68,7 +69,7 @@ function FindingList({ rows, empty }: { rows: any[]; empty?: string }) {
         <div key={f.id} className="feed-item" style={{ gridTemplateColumns: 'auto 1fr auto' }}>
           <Sev level={f.severity} rule={f.rule_id} />
           <div>
-            <div className="t">{f.title}</div>
+            <div className="t">{f.title} <Conf level={f.confidence} /></div>
             {f.detail && <div className="m">{f.detail}</div>}
             <div style={{ marginTop: 6 }}><Why rule={f.rule_id} level={f.severity} /></div>
             <div className="m" style={{ marginTop: 4 }}><span>observed {day(f.observed)}</span><span>first seen <When ts={f.first_seen} /></span><span className="mono">{f.source_id}</span></div>

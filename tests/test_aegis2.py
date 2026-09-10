@@ -11,7 +11,7 @@ from aegis.intel import fingerprints as fp  # noqa: E402
 from aegis.intel import prevent  # noqa: E402
 from aegis.intel.pipeline import extract_victim, product_match, rule_cat  # noqa: E402
 from aegis.intel.themes import cves_for, themes_for  # noqa: E402
-from aegis.rating import RULES, rule, vuln_rule, worst  # noqa: E402
+from aegis.rating import CONFIDENCE, RULE_CONFIDENCE, RULES, cap_for_confidence, confidence_for, rule, vuln_rule, worst  # noqa: E402
 
 
 # --- passive only -------------------------------------------------------------------------------
@@ -311,3 +311,57 @@ def test_only_surf_large_falls_through_to_footprint():
 
 def test_caa_violation_is_medium_not_high():
     assert rule("CRT-CAA-VIOLATION")[0] == "medium"
+
+
+# --- v2.1 B1: confidence ---------------------------------------------------------------------
+def test_every_organisation_rule_declares_a_confidence():
+    for rid, (_, scope, _) in RULES.items():
+        if scope == "organisation":
+            assert rid in RULE_CONFIDENCE, rid
+            assert RULE_CONFIDENCE[rid] in CONFIDENCE, rid
+
+
+def test_confidence_buckets_do_not_overlap_or_invent_rules():
+    for rid in RULE_CONFIDENCE:
+        assert rid in RULES, rid
+
+
+@pytest.mark.parametrize("severity,confidence,expected", [
+    ("critical", "unconfirmed", "high"),      # the cap
+    ("critical", "likely", "critical"),
+    ("critical", "confirmed", "critical"),
+    ("high", "unconfirmed", "high"),          # nothing below Critical moves
+    ("medium", "unconfirmed", "medium"),
+    ("low", "unconfirmed", "low"),
+])
+def test_unconfirmed_evidence_is_capped_at_high(severity, confidence, expected):
+    assert cap_for_confidence(severity, confidence) == expected
+
+
+def test_a_forum_claim_of_access_is_not_presented_as_critical():
+    # DW-ACCESS-14 is declared Critical but rests on a broker's claim, so it reads as High
+    assert rule("DW-ACCESS-14")[0] == "critical"
+    assert confidence_for("DW-ACCESS-14") == "unconfirmed"
+    assert cap_for_confidence(*(rule("DW-ACCESS-14")[0], confidence_for("DW-ACCESS-14"))) == "high"
+
+
+def test_observed_records_are_confirmed_and_inferences_are_not():
+    for rid in ("HYG-DMARC-NONE", "DOM-LOCK", "BGP-RPKI-INVALID", "AI-SERVICE-DNS", "VUL-KEV-EXPOSED"):
+        assert confidence_for(rid) == "confirmed", rid
+    for rid in ("SURF-EDGE", "AI-EXPOSED-PORT", "DW-FORUM-30", "THR-SECTOR"):
+        assert confidence_for(rid) == "unconfirmed", rid
+    # a CAA mismatch is a strong join, not an observation of mis-issuance
+    assert confidence_for("CRT-CAA-VIOLATION") == "likely"
+
+
+def test_link_types_all_declare_a_confidence():
+    from aegis.intel.pipeline import LINK_CONFIDENCE
+    for lt in pipeline_link_types():
+        assert lt in LINK_CONFIDENCE, lt
+    assert LINK_CONFIDENCE["TARGETING"] == "unconfirmed"   # same sector and country is an inference
+    assert LINK_CONFIDENCE["GROUP"] == "confirmed"         # a GLEIF corporate-group record
+
+
+def pipeline_link_types():
+    from aegis.intel.pipeline import LINK_TYPES
+    return list(LINK_TYPES)

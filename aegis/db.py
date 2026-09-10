@@ -77,7 +77,8 @@ CREATE INDEX IF NOT EXISTS ix_dep_vendor ON dependency(vendor);
 
 CREATE TABLE IF NOT EXISTS finding (
   id TEXT PRIMARY KEY, org_id TEXT, category TEXT, title TEXT, detail TEXT, severity TEXT,
-  rule_id TEXT, evidence_url TEXT, source_id TEXT, observed TEXT, first_seen TEXT, last_seen TEXT, data TEXT
+  rule_id TEXT, evidence_url TEXT, source_id TEXT, observed TEXT, first_seen TEXT, last_seen TEXT, data TEXT,
+  confidence TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_finding_org ON finding(org_id, severity);
 
@@ -89,7 +90,7 @@ CREATE TABLE IF NOT EXISTS incident (
 CREATE INDEX IF NOT EXISTS ix_incident_last ON incident(last_seen);
 
 CREATE TABLE IF NOT EXISTS impact (
-  incident_id TEXT, org_id TEXT, link_type TEXT, severity TEXT, reason TEXT, evidence TEXT,
+  incident_id TEXT, org_id TEXT, link_type TEXT, severity TEXT, reason TEXT, evidence TEXT, confidence TEXT,
   PRIMARY KEY (incident_id, org_id, link_type)
 );
 CREATE INDEX IF NOT EXISTS ix_impact_org ON impact(org_id);
@@ -105,6 +106,9 @@ JSON_COLS = {"domains", "indices", "aliases", "themes", "entities", "org_ids", "
 MIGRATIONS = {
     "actor": {"tools": "TEXT", "techniques": "TEXT", "cs_targets": "TEXT", "cs_url": "TEXT", "misp_uuid": "TEXT"},
     "org": {"sub_industry": "TEXT", "isin": "TEXT"},
+    # v2.1: how strongly the evidence supports the finding (confirmed | likely | unconfirmed)
+    "finding": {"confidence": "TEXT"},
+    "impact": {"confidence": "TEXT"},
 }
 
 

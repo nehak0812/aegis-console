@@ -32,6 +32,18 @@ export function Sev({ level, rule, compact }: { level?: string | null; rule?: st
   )
 }
 
+const CONF_HELP: Record<string, string> = {
+  confirmed: 'Confirmed: an observed record — a DNS, RDAP or certificate lookup, a filing, or a CVE on a host we resolved.',
+  likely: 'Likely: a strong but indirect join, such as an exact name match or a product seen without its version.',
+  unconfirmed: 'Unconfirmed: an inference or someone else’s claim. Never presented as Critical.',
+}
+
+/** How strongly the evidence supports a finding. Neutral tokens on purpose: colour is reserved for severity. */
+export function Conf({ level }: { level?: string | null }) {
+  if (!level) return null
+  return <span className={`pill conf ${level}`} title={CONF_HELP[level] || level}>{level}</span>
+}
+
 export function Why({ rule, level }: { rule?: string | null; level?: string | null }) {
   const rules = useRules()
   if (!rule) return null

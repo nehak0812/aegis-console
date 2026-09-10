@@ -312,3 +312,9 @@ abbr.gloss:hover { text-decoration-color: var(--accent); color: var(--ink); }
   .stat .value { font-size: 26px; }
   .tabs button { padding: 9px 10px; font-size: 13px; }
 }
+
+/* confidence: neutral by design — colour stays reserved for severity */
+.pill.conf { font-size: 11px; letter-spacing: .01em; }
+.pill.conf.confirmed { border-color: var(--hair-2); color: var(--ink-2); }
+.pill.conf.likely { opacity: .85; }
+.pill.conf.unconfirmed { opacity: .7; font-style: italic; }

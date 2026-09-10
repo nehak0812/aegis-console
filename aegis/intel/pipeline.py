@@ -16,7 +16,7 @@ from aegis.intel.entities import matcher, norm, reg_domain
 from aegis.intel import fingerprints as fp
 from aegis.intel import prevent
 from aegis.intel.themes import themes_for_ai
-from aegis.rating import RANK, RISKY_PORTS, rule, worst
+from aegis.rating import RANK, RISKY_PORTS, cap_for_confidence, confidence_for, rule, worst
 
 UTC = timezone.utc
 
@@ -372,6 +372,10 @@ def build_incidents(days: int = 90) -> int:
 
 
 # ============================================================== 3. impact linkage
+# What kind of evidence each link rests on. Sector-and-country targeting is an inference,
+# and capping it below Critical keeps the top level meaning "we observed this".
+LINK_CONFIDENCE = {"DIRECT": "likely", "GROUP": "confirmed", "DEPENDENCY": "confirmed",
+                   "EXPOSED_PRODUCT": "likely", "TARGETING": "unconfirmed"}
 LINK_TYPES = {
     "DIRECT": "Named victim",
     "GROUP": "Same corporate group (GLEIF)",
@@ -444,7 +448,9 @@ def build_impacts() -> int:
 
     def add(iid, oid, lt, sev, reason, evidence):
         if oid and oid in orgs:
-            rows.append({"incident_id": iid, "org_id": oid, "link_type": lt, "severity": sev, "reason": reason[:300], "evidence": evidence[:300]})
+            conf = LINK_CONFIDENCE.get(lt, "likely")
+            rows.append({"incident_id": iid, "org_id": oid, "link_type": lt, "severity": cap_for_confidence(sev, conf),
+                         "confidence": conf, "reason": reason[:300], "evidence": evidence[:300]})
 
     for inc in incs:
         iid = inc["id"]
@@ -550,8 +556,12 @@ def build_findings() -> int:
 
     def F(oid, rid, title, detail, url, source, observed, key="", data=None):
         sev, _ = rule(rid)
+        # a caller may override where it knows more than the rule does (a CPE with a version
+        # is confirmed; the same product guessed from a hostname is not)
+        conf = (data or {}).get("confidence") or confidence_for(rid)
         out.append({"id": hid(oid, rid, key or title), "org_id": oid, "category": rule_cat(rid), "title": title[:240], "detail": (detail or "")[:600],
-                    "severity": sev, "rule_id": rid, "evidence_url": url, "source_id": source, "observed": observed, "data": data or {}})
+                    "severity": cap_for_confidence(sev, conf), "confidence": conf,
+                    "rule_id": rid, "evidence_url": url, "source_id": source, "observed": observed, "data": data or {}})
 
     # --- dark web & breaches
     for l in db.q("SELECT * FROM leak WHERE org_id IS NOT NULL"):

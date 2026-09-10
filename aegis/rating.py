@@ -96,6 +96,54 @@ RISKY_PORTS = {21: "FTP", 23: "Telnet", 445: "SMB", 139: "NetBIOS", 3389: "RDP",
                5985: "WinRM", 5986: "WinRM", 161: "SNMP", 623: "IPMI", 9000: "Admin panel", 10250: "Kubelet"}
 
 
+# How strongly the evidence supports a finding. This is not a probability and it never
+# changes the rule that fired — it says what kind of evidence stands behind it.
+#
+#   confirmed   — an observed record: a DNS, RDAP or certificate lookup, a CVE on a host we
+#                 resolved, an SEC filing, a domain / CIK / LEI match.
+#   likely      — a strong but indirect join: an exact name match, a product CPE without its
+#                 version, a breach whose domain matches, a CAA mismatch.
+#   unconfirmed — an inference or someone else's claim: a text mention, a product guessed from
+#                 a hostname, a forum post.
+CONFIDENCE = ("confirmed", "likely", "unconfirmed")
+DEFAULT_CONFIDENCE = "likely"
+RULE_CONFIDENCE = {
+    # observed records
+    **{r: "confirmed" for r in (
+        "HYG-DMARC-NONE", "HYG-SPF-MISSING", "HYG-SPF-SOFT", "HYG-SPF-LOOKUPS", "HYG-DKIM-NONE",
+        "HYG-DNSSEC", "HYG-MTASTS", "HYG-TLSRPT", "HYG-CAA", "HYG-NS-SINGLE",
+        "DOM-LOCK", "DOM-EXPIRY-30", "DOM-EXPIRY-90", "CRT-EXPIRY-14",
+        "BGP-RPKI-INVALID", "BGP-RPKI-NONE", "LOOK-MX", "LOOK-LIVE",
+        "SURF-TAKEOVER", "SURF-RISKY-PORT", "VUL-KEV-EXPOSED", "VUL-EXPOSED-HIGH", "VUL-EXPOSED",
+        "CMP-C2", "CMP-ABUSE", "DISC-8K-90", "DISC-8K-OLD", "DISC-801", "AI-SERVICE-DNS",
+        "AI-EXPOSED-SERVICE", "SURF-LARGE")},
+    # strong but indirect
+    **{r: "likely" for r in (
+        "CRT-CAA-VIOLATION", "BR-PUBLIC-90", "BR-PUBLIC-12M", "BR-PUBLIC-OLD",
+        "DW-STEALER-30", "DW-STEALER-EMP", "DW-STEALER-OLD", "DW-DDOS-7", "DW-DDOS-30",
+        "DW-LEAK-30", "DW-LEAK-180", "DW-LEAK-OLD", "DW-LEAK-SUB", "TP-VENDOR-INC",
+        "AI-PROVIDER-INC", "AI-HOST", "AI-INCIDENT")},
+    # inference, or someone else's claim
+    **{r: "unconfirmed" for r in (
+        "DW-ACCESS-14", "DW-FORUM-30", "DW-FORUM-OLD", "INC-NAMED-30", "INC-NAMED-1",
+        "SURF-EDGE", "SURF-EDGE-KEV", "AI-EXPOSED-PORT", "THR-SECTOR", "TP-CONCENTRATION")},
+}
+
+
+def confidence_for(rule_id: str) -> str:
+    return RULE_CONFIDENCE.get(rule_id, DEFAULT_CONFIDENCE)
+
+
+def cap_for_confidence(severity: str, confidence: str) -> str:
+    """Evidence that is only inferred or claimed never reads as Critical.
+
+    A hostname that looks like a VPN, or a forum post claiming access, may well be right —
+    but it is not the same standing as a record we resolved, and presenting it at the top
+    level costs the reader trust in every Critical on the page.
+    """
+    return "high" if confidence == "unconfirmed" and severity == "critical" else severity
+
+
 def rule(rule_id: str) -> tuple[str, str]:
     """-> (severity, reason text)"""
     lvl, _, text = RULES[rule_id]
