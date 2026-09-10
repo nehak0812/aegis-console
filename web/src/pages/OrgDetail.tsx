@@ -4,13 +4,13 @@ import { motion } from 'motion/react'
 import { ResponsiveCirclePacking } from '@nivo/circle-packing'
 import { RefreshCw, CheckCircle2, XCircle, MinusCircle, ExternalLink } from 'lucide-react'
 import { useApi, api } from '../lib/api'
-import { Card, Sev, Why, Empty, When, SourceLink, Tabs, Table, SevCounts, Stat, useRules } from '../components/ui'
+import { Card, Sev, Why, Empty, When, SourceLink, Tabs, Table, SevCounts, Stat, useRules, usePlaybooks } from '../components/ui'
 import { HBar, Columns } from '../components/charts'
 import { gloss } from '../lib/glossary'
 import { SEV_COLOR, SERIES, nivoTheme, EMPTY, SURFACE, onFill } from '../lib/chartTheme'
 import { countryName, day, compact } from '../lib/format'
 
-type Tab = 'summary' | 'assets' | 'third' | 'exposure' | 'compromise' | 'events' | 'hygiene' | 'findings'
+type Tab = 'summary' | 'prevent' | 'assets' | 'third' | 'exposure' | 'compromise' | 'events' | 'hygiene' | 'findings'
 const CAT_TAB: Record<string, Tab> = { footprint: 'assets', critical: 'assets', cloud: 'assets', software: 'third', exposure: 'exposure', vulns: 'exposure',
   compromise: 'compromise', darkweb: 'events', chatter: 'events', hygiene: 'hygiene', disclosure: 'events', ai: 'events' }
 const LT: Record<string, string> = { DIRECT: 'Named victim', GROUP: 'Corporate group', DEPENDENCY: 'Provider dependency', EXPOSED_PRODUCT: 'Exposed product', TARGETING: 'Sector targeting' }
@@ -24,6 +24,34 @@ function Check({ ok, warn, label, detail, url, state, linkLabel }:
       <Icon size={16} color={color} />
       <div><div className="t">{gloss(label)} <span className="muted" style={{ fontWeight: 400 }}>· {state || (ok ? 'present' : warn ? 'partial' : 'missing')}</span></div>{detail && <div className="m mono" style={{ wordBreak: 'break-all' }}>{detail}</div>}</div>
       {url ? <SourceLink url={url} label={linkLabel || 'DNS record'} /> : <span />}
+    </div>
+  )
+}
+
+/** A finding with the playbook for fixing it: what it prevents, who owns it, effort, steps. */
+function Action({ f, book }: { f: any; book: any }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="feed-item" style={{ gridTemplateColumns: '1fr', gap: 6 }}>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <Sev level={f.severity} rule={f.rule_id} />
+        <b style={{ flex: 1, minWidth: 200 }}>{f.title}</b>
+        {book && <span className="pill">{book.owner}</span>}
+        {book && <span className="pill" title={`about ${book.effort_label}`}>{book.effort}</span>}
+        <button className="pill btn" onClick={() => setOpen(o => !o)}>{open ? 'Hide' : 'How to fix'}</button>
+      </div>
+      {book && <div className="m" style={{ color: 'var(--ink-2)' }}><b>Prevents:</b> {gloss(book.prevents)}</div>}
+      {open && book && (
+        <div className="stack" style={{ gap: 6, paddingLeft: 4, borderLeft: '2px solid var(--hair-2)', marginLeft: 2 }}>
+          <ol style={{ margin: 0, paddingLeft: 18 }}>
+            {book.steps.map((st: string, i: number) => <li key={i} style={{ marginBottom: 3 }}>{gloss(st)}</li>)}
+          </ol>
+          {book.controls?.length > 0 && (
+            <div className="m muted">Indicative control references: {book.controls.join(' · ')}</div>
+          )}
+          {f.evidence_url?.startsWith('http') && <div><SourceLink url={f.evidence_url} label="Evidence" /></div>}
+        </div>
+      )}
     </div>
   )
 }
@@ -72,6 +100,19 @@ export default function OrgDetail() {
   const rdapUrl = d ? `https://rdap.org/domain/${d}` : undefined
   const expiryDays = rdap?.expires ? Math.floor((Date.parse(rdap.expires) - Date.now()) / 86400000) : null
   const lookalikes: any[] = fp.lookalikes || []
+  const books = usePlaybooks()
+  const prevent = data.prevent || { scanned: false, controls: [] }
+  // preventable = a finding with a playbook; ordered worst-first, then by how much work it is
+  const EFFORT_ORDER: Record<string, number> = { S: 0, M: 1, L: 2 }
+  const actions = useMemo(() => (data.findings as any[])
+    .filter(f => books[f.rule_id])
+    .sort((a, b) => (['critical', 'high', 'medium', 'low'].indexOf(a.severity) - ['critical', 'high', 'medium', 'low'].indexOf(b.severity))
+      || (EFFORT_ORDER[books[a.rule_id].effort] - EFFORT_ORDER[books[b.rule_id].effort])), [data.findings, books])
+  const byOwner = useMemo(() => {
+    const m: Record<string, any[]> = {}
+    for (const f of actions) (m[books[f.rule_id].owner] ||= []).push(f)
+    return Object.entries(m).sort((a, b) => b[1].length - a[1].length)
+  }, [actions, books])
   const dohUrl = (n: string, t: string) => `https://dns.google/resolve?name=${n}&type=${t}`
   const stealer = data.leaks.find((l: any) => l.kind === 'stealer')
 
@@ -125,7 +166,7 @@ export default function OrgDetail() {
       </div>
 
       <Tabs value={tab} onChange={t => { setTab(t); setCat(null) }} tabs={[
-        { id: 'summary', label: 'Overview' }, { id: 'assets', label: 'Assets & cloud' }, { id: 'third', label: 'Software & third parties' },
+        { id: 'summary', label: 'Overview' }, { id: 'prevent', label: 'Prevent' }, { id: 'assets', label: 'Assets & cloud' }, { id: 'third', label: 'Software & third parties' },
         { id: 'exposure', label: 'Exposure & vulnerabilities' }, { id: 'compromise', label: 'Compromised IPs' }, { id: 'events', label: 'Dark web & incidents' },
         { id: 'hygiene', label: 'Email & domain' }, { id: 'findings', label: 'All findings', count: data.findings.length }]} />
 
@@ -160,6 +201,40 @@ export default function OrgDetail() {
                 </div>)}
             </Card>
           </div>
+        </div>
+      )}
+
+      {tab === 'prevent' && (
+        <div className="stack" style={{ gap: 14 }}>
+          <div className="grid g4">
+            <Stat label="Preventable findings" value={actions.length} hint="findings with a documented fix" />
+            <Stat label="Needing attention first" value={actions.filter(a => a.severity === 'critical' || a.severity === 'high').length} hint="Critical or High" />
+            <Stat label="Quick wins" value={actions.filter(a => books[a.rule_id]?.effort === 'S').length} hint="hours of work, not days" />
+            <Stat label="Teams involved" value={byOwner.length} hint="owners with something to do" />
+          </div>
+
+          <Card title="Controls, next to peers in the same sector"
+            sub="adoption among monitored organisations — context for whether a gap is unusual or normal">
+            {!prevent.scanned ? <Empty>Awaiting scan.</Empty> : (
+              <Table rows={prevent.controls} max={20} cols={[
+                { key: 'label', label: 'Control' },
+                { key: 'prevents', label: 'Prevents', render: (c: any) => <span className="muted">{gloss(c.prevents)}</span> },
+                { key: 'has', label: 'This organisation', width: 130, render: (c: any) => c.has
+                  ? <span className="pill">in place</span>
+                  : <span className="pill" style={{ color: 'var(--medium)' }}>not in place</span> },
+                { key: 'sector_pct', label: 'Sector', width: 120, num: true,
+                  render: (c: any) => c.sector_pct === null ? <span className="muted">—</span>
+                    : <span title={`${c.sector_pct}% of ${c.sector_n} monitored ${c.sector} organisations`}>{c.sector_pct}%</span> },
+                { key: 'estate_pct', label: 'All monitored', width: 130, num: true, render: (c: any) => <span className="muted">{c.estate_pct}%</span> },
+              ]} />)}
+          </Card>
+
+          {byOwner.map(([owner, rows]) => (
+            <Card key={owner} title={owner} sub={`${rows.length} to action`}>
+              <div className="feed">{rows.map((f: any) => <Action key={f.id} f={f} book={books[f.rule_id]} />)}</div>
+            </Card>
+          ))}
+          {!actions.length && <Card><Empty>No preventable findings — everything open here is historic reporting rather than a fixable control.</Empty></Card>}
         </div>
       )}
 

@@ -1,6 +1,7 @@
 """AEGIS REST API — read-only intelligence views plus 'add organisation' / 'scan now'. Serves the built console."""
 import os
 import re
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -8,8 +9,9 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from aegis import ROOT, db, rating, scheduler
+from aegis import ROOT, db, playbooks, rating, scheduler
 from aegis.intel import pipeline
+from aegis.intel import prevent
 from aegis.intel.entities import country_code, matcher, norm, reg_domain
 from aegis.intel.themes import THEME_FAMILY, theme_catalogue
 
@@ -84,7 +86,9 @@ def rules():
 
 @app.get("/api/method")
 def method():
-    return {"rules": rating.catalogue(), "themes": theme_catalogue(), "categories": pipeline.CATEGORIES,
+    return {"rules": rating.catalogue(), "playbooks": playbooks.catalogue(), "playbook_coverage": playbooks.coverage(),
+            "owners": playbooks.OWNERS, "effort": playbooks.EFFORT,
+            "themes": theme_catalogue(), "categories": pipeline.CATEGORIES,
             "link_types": pipeline.LINK_TYPES, "risky_ports": rating.RISKY_PORTS,
             "bitsight_mapping": BITSIGHT_MAP}
 
@@ -124,6 +128,106 @@ def search(q: str = Query(..., min_length=2)):
     for v in db.q("SELECT vendor, count(DISTINCT org_id) n FROM dependency WHERE vendor LIKE ? GROUP BY vendor LIMIT 4", (like,)):
         out.append({"kind": "Provider", "label": v["vendor"], "sub": f"used by {v['n']} monitored orgs", "href": f"/incidents?provider={v['vendor']}"})
     return out
+
+
+# ------------------------------------------------------------------ prevent
+# Controls the surface scan already measures for every organisation. Reported as adoption
+# percentages across monitored organisations — never as a score, and never ranked.
+CONTROLS = [
+    ("dmarc_enforced", "DMARC enforced (p=quarantine or reject)", "Email spoofing",
+     lambda h, a: (h.get("dmarc") or {}).get("p") in ("quarantine", "reject")),
+    ("spf_strict", "SPF ends in -all", "Email spoofing",
+     lambda h, a: (h.get("spf") or {}).get("all") == "-"),
+    ("dkim", "DKIM key published", "Email tampering",
+     lambda h, a: bool(h.get("dkim_selectors"))),
+    ("mta_sts", "MTA-STS policy", "Mail interception",
+     lambda h, a: bool(h.get("mta_sts"))),
+    ("tls_rpt", "TLS reporting", "Undetected mail TLS failure",
+     lambda h, a: bool(h.get("tls_rpt"))),
+    ("dnssec", "DNSSEC signed", "DNS forgery",
+     lambda h, a: bool(h.get("dnssec"))),
+    ("caa", "CAA record", "Certificate mis-issuance",
+     lambda h, a: bool(h.get("caa"))),
+    ("ns_redundant", "DNS served by more than one provider", "Single-provider outage",
+     lambda h, a: bool(h.get("ns")) and not prevent.ns_single_provider(h.get("ns"))),
+    ("domain_locked", "Registrar transfer lock", "Domain hijack",
+     lambda h, a: bool((a.get("rdap") or {}).get("locked"))),
+]
+
+
+def _domain_attrs() -> list[tuple[str, str, dict]]:
+    """(org_id, sector, domain-asset attrs) for every organisation that has been scanned."""
+    out = []
+    sectors = {o["id"]: o["sector"] for o in db.q("SELECT id, sector FROM org")}
+    for a in db.q("SELECT org_id, attrs FROM asset WHERE kind='domain'"):
+        at = a.get("attrs") or {}
+        if at.get("hygiene"):
+            out.append((a["org_id"], sectors.get(a["org_id"]) or "Unknown", at))
+    return out
+
+
+_ADOPTION_CACHE: dict = {"at": 0.0, "value": None}
+_ADOPTION_TTL = 300  # seconds; the underlying scans only move every 15 minutes
+
+
+def control_adoption(rows=None) -> list[dict]:
+    """Adoption of each control across monitored organisations.
+
+    Cached: computing this reads every organisation's domain attrs (~10 KB each, ~7 MB in
+    total), and the organisation page asks for it on every load and every 90-second refetch.
+    """
+    if rows is None:
+        now = time.monotonic()
+        if _ADOPTION_CACHE["value"] is not None and now - _ADOPTION_CACHE["at"] < _ADOPTION_TTL:
+            return _ADOPTION_CACHE["value"]
+        rows = _domain_attrs()
+        _ADOPTION_CACHE.update(at=now, value=_adoption(rows))
+        return _ADOPTION_CACHE["value"]
+    return _adoption(rows)
+
+
+def _adoption(rows) -> list[dict]:
+    out = []
+    for cid, label, prevents, test in CONTROLS:
+        by_sector: dict[str, list[int]] = {}
+        n = 0
+        for _, sector, at in rows:
+            ok = 1 if test(at.get("hygiene") or {}, at) else 0
+            n += ok
+            g = by_sector.setdefault(sector, [0, 0])
+            g[0] += ok
+            g[1] += 1
+        out.append({"id": cid, "label": label, "prevents": prevents, "adopted": n, "total": len(rows),
+                    "pct": round(100 * n / len(rows)) if rows else 0,
+                    "by_sector": {k: {"adopted": v[0], "total": v[1], "pct": round(100 * v[0] / v[1])} for k, v in sorted(by_sector.items()) if v[1] >= 3}})
+    return out
+
+
+@app.get("/api/prevent")
+def prevent_overview():
+    """Estate-wide preventive posture: which controls are adopted, and where the work sits."""
+    rows = _domain_attrs()
+    controls = control_adoption(rows)
+    # open preventive findings, grouped by the owner who would fix them
+    by_owner: dict[str, dict] = {}
+    for f in db.q("SELECT rule_id, severity, org_id FROM finding"):
+        p = playbooks.PLAYBOOKS.get(f["rule_id"])
+        if not p:
+            continue
+        g = by_owner.setdefault(p["owner"], {"owner": p["owner"], "findings": 0, "orgs": set(),
+                                             "critical": 0, "high": 0, "medium": 0, "low": 0, "rules": {}})
+        g["findings"] += 1
+        g["orgs"].add(f["org_id"])
+        g[f["severity"]] = g.get(f["severity"], 0) + 1
+        g["rules"][f["rule_id"]] = g["rules"].get(f["rule_id"], 0) + 1
+    owners = []
+    for g in by_owner.values():
+        top = sorted(g["rules"].items(), key=lambda kv: -kv[1])[:4]
+        owners.append({**{k: v for k, v in g.items() if k not in ("orgs", "rules")}, "orgs": len(g["orgs"]),
+                       "top_rules": [{"rule_id": r, "count": c, "effort": playbooks.PLAYBOOKS[r]["effort"]} for r, c in top]})
+    owners.sort(key=lambda x: (-x["critical"], -x["high"], -x["findings"]))
+    return {"scanned": len(rows), "controls": controls, "by_owner": owners,
+            "coverage": playbooks.coverage()}
 
 
 # ------------------------------------------------------------------ overview
@@ -378,6 +482,28 @@ def orgs_export(q: str | None = None, sector: list[str] | None = Query(None), co
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+def _org_prevent(o: dict, dom: dict | None) -> dict:
+    """This organisation's controls, each next to how common it is among its peers.
+
+    Peer context is what turns "no CAA record" into a decision: near-universal absence is
+    context, while being the only one in your sector without it is a finding worth acting on.
+    """
+    at = (dom or {}).get("attrs") or {}
+    hyg = at.get("hygiene") or {}
+    if not hyg:
+        return {"scanned": False, "controls": []}
+    sector = o.get("sector") or "Unknown"
+    adoption = {c["id"]: c for c in control_adoption()}
+    out = []
+    for cid, label, prevents, test in CONTROLS:
+        a = adoption[cid]
+        peers = a["by_sector"].get(sector)
+        out.append({"id": cid, "label": label, "prevents": prevents, "has": bool(test(hyg, at)),
+                    "estate_pct": a["pct"], "sector": sector if peers else None,
+                    "sector_pct": peers["pct"] if peers else None, "sector_n": peers["total"] if peers else None})
+    return {"scanned": True, "sector": sector, "controls": out}
+
+
 @app.get("/api/orgs/{oid}")
 def org(oid: str):
     o = db.one("SELECT * FROM org WHERE id=?", (oid,))
@@ -429,7 +555,7 @@ def org(oid: str):
                  "compromise": f"{(db.kv_get('footprint_sizes', {}) or {}).get(oid, 0):,} addresses checked" if dom else None}
     return {
         "org": o, "posture": pipeline.posture(oid), "categories": pipeline.CATEGORIES, "inventory": inventory,
-        "findings": findings, "critical_assets": crit,
+        "findings": findings, "critical_assets": crit, "prevent": _org_prevent(o, dom),
         "footprint": {"domain": dom, "hostnames": len(hosts), "ct_count": ((dom or {}).get("attrs") or {}).get("ct_count", 0),
                       "ips": [{"ip": a["value"], **(a.get("attrs") or {})} for a in ips], "prefixes": [{"cidr": a["value"], **(a.get("attrs") or {})} for a in prefixes],
                       "host_list": [{"host": h["value"], **(h.get("attrs") or {})} for h in hosts],

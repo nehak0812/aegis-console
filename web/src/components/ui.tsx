@@ -13,6 +13,12 @@ export function useRules() {
 }
 
 /** Severity: always icon + label (never colour alone). Hover shows the rule that assigned it. */
+/** Playbooks keyed by rule id: what a finding costs to fix, who fixes it, and how. */
+export function usePlaybooks() {
+  const { data } = useApi<any>('/method', 3600)
+  return useMemo(() => Object.fromEntries(((data?.playbooks) || []).filter(Boolean).map((p: any) => [p.rule_id, p])), [data])
+}
+
 export function Sev({ level, rule, compact }: { level?: string | null; rule?: string | null; compact?: boolean }) {
   const rules = useRules()
   if (!level) return null
