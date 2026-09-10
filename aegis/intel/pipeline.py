@@ -11,7 +11,8 @@ import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
-from aegis import db
+from aegis import db, playbooks
+from aegis.actions import TERMINAL, actionable, due_date, entry, sla_days, suppressed
 from aegis.intel.entities import matcher, norm, reg_domain
 from aegis.intel import fingerprints as fp
 from aegis.intel import prevent
@@ -842,6 +843,75 @@ def build_findings() -> int:
     return len(uniq)
 
 
+# ============================================================== 5. actions
+def build_actions() -> int:
+    """Keep the action queue in step with the findings, and prove closure rather than assert it.
+
+    An action is keyed on the finding id, which is stable across runs, so status set by a person
+    survives every rebuild. Three things happen here that a person never has to do:
+
+      - a finding that stops being produced closes its action, stamped verified_closed_at,
+        because the next scan no longer sees the problem;
+      - a finding that comes back reopens it and counts the reopen;
+      - a finding somebody marked false_positive or accepted_risk raises nothing at all, until
+        the acceptance expires.
+    """
+    now = db.now()
+    today = now[:10]
+    fb = {(r["org_id"], r["source_key"]): r for r in db.q("SELECT * FROM feedback")}
+    existing = {r["id"]: r for r in db.q("SELECT * FROM action")}
+    live = {}
+    for f in db.q("SELECT id, org_id, rule_id, title, severity, confidence FROM finding"):
+        if not actionable(f["severity"]):
+            continue                                    # Low findings are inventory
+        d = fb.get((f["org_id"], f["id"]))
+        if d and suppressed(d["decision"], d.get("expires"), today):
+            continue
+        live[f["id"]] = f
+
+    rows, seen = [], set()
+    for fid, f in live.items():
+        prev = existing.get(fid)
+        book = playbooks.PLAYBOOKS.get(f["rule_id"]) or {}
+        days = sla_days(f["severity"])
+        if prev:
+            hist = list(prev.get("history") or [])
+            status, reopened, created = prev["status"], int(prev.get("reopened") or 0), prev["created"]
+            verified = prev.get("verified_closed_at")
+            if status in TERMINAL and status != "false_positive":
+                # it came back: the fix did not hold, or the acceptance lapsed
+                hist.append(entry("new", "aegis", now, note=f"Reopened: the finding was raised again after {status}."))
+                status, reopened, verified = "new", reopened + 1, None
+            rows.append({**prev, "level": f["severity"], "confidence": f.get("confidence"), "title": f["title"][:240],
+                         "owner_role": book.get("owner"), "status": status, "reopened": reopened,
+                         "verified_closed_at": verified, "created": created, "updated": now, "history": hist[-40:]})
+        else:
+            rows.append({"id": fid, "org_id": f["org_id"], "source_kind": "finding", "source_key": fid,
+                         "rule_id": f["rule_id"], "title": f["title"][:240], "level": f["severity"],
+                         "confidence": f.get("confidence"), "owner_role": book.get("owner"), "owner": None,
+                         "status": "new", "due": due_date(f["severity"], now) if days else None,
+                         "created": now, "updated": now, "verified_closed_at": None, "reopened": 0,
+                         "history": [entry("new", "aegis", now, note="Raised from a finding.")]})
+        seen.add(fid)
+
+    # anything the scan no longer produces is fixed, and we can say so
+    for aid, a in existing.items():
+        if aid in seen or a["status"] in ("false_positive", "accepted_risk"):
+            continue
+        if a["status"] == "resolved":
+            rows.append(a)                              # already closed, leave it alone
+            continue
+        hist = list(a.get("history") or [])
+        hist.append(entry("resolved", "aegis", now, note="Verified closed: the finding is no longer produced."))
+        rows.append({**a, "status": "resolved", "verified_closed_at": now, "updated": now, "history": hist[-40:]})
+
+    c = db.conn()
+    c.execute("DELETE FROM action")
+    c.commit()
+    db.upsert("action", rows)
+    return len(rows)
+
+
 def posture(org_id: str) -> dict:
     rows = db.q("SELECT severity, category FROM finding WHERE org_id=?", (org_id,))
     counts = Counter(r["severity"] for r in rows)
@@ -907,7 +977,8 @@ def dedupe_leaks() -> int:
 
 def run_all() -> dict:
     t = {}
-    for name, fn in (("dedupe", dedupe_leaks), ("enrich", enrich), ("incidents", build_incidents), ("impacts", build_impacts), ("findings", build_findings)):
+    for name, fn in (("dedupe", dedupe_leaks), ("enrich", enrich), ("incidents", build_incidents), ("impacts", build_impacts),
+                     ("findings", build_findings), ("actions", build_actions)):
         try:
             t[name] = fn()
         except Exception as e:

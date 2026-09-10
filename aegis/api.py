@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from aegis import ROOT, db, playbooks, rating, scheduler
+from aegis import ROOT, actions, db, playbooks, rating, scheduler
 from aegis.intel import pipeline
 from aegis.intel import prevent
 from aegis.intel.entities import country_code, matcher, norm, reg_domain
@@ -132,6 +132,71 @@ def search(q: str = Query(..., min_length=2)):
 
 
 THEME_TREE_ORDER = [f for f in dict.fromkeys(THEME_FAMILY.values()) if f]
+
+
+# ------------------------------------------------------------------ actions
+def _action_view(a: dict, now: str) -> dict:
+    book = playbooks.playbook(a["rule_id"]) or {}
+    return {**a, "overdue": actions.overdue(a.get("due"), a["status"], now),
+            "open": a["status"] in actions.OPEN,
+            "playbook": {k: book.get(k) for k in ("owner", "effort", "effort_label", "prevents", "steps", "controls")} if book else None}
+
+
+@app.get("/api/actions")
+def action_queue(org: str | None = None, level: str | None = None, status: str | None = None,
+                 owner_role: str | None = None, overdue: bool = False, open_only: bool = True, limit: int = 400):
+    """The action queue. Defaults to what is still open, because that is the working view."""
+    now = db.now()
+    sql, p = "SELECT * FROM action WHERE 1=1", []
+    if org:
+        sql += " AND org_id=?"; p.append(org)
+    if level:
+        sql += " AND level=?"; p.append(level)
+    if status:
+        sql += " AND status=?"; p.append(status)
+    elif open_only:
+        sql += f" AND status IN ({ph(len(actions.OPEN))})"; p += list(actions.OPEN)
+    if owner_role:
+        sql += " AND owner_role=?"; p.append(owner_role)
+    rows = [_action_view(a, now) for a in db.q(sql + " ORDER BY CASE level WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END, due", p)]
+    if overdue:
+        rows = [r for r in rows if r["overdue"]]
+    names = {o["id"]: o["name"] for o in db.q("SELECT id, name FROM org")}
+    for r in rows:
+        r["org"] = names.get(r["org_id"], r["org_id"])
+    every = db.q("SELECT level, status, due, verified_closed_at FROM action")
+    closed30 = [a for a in every if a.get("verified_closed_at") and a["verified_closed_at"] > ts(30)]
+    return {"actions": rows[:limit], "total": len(rows),
+            "kpi": {"open": sum(1 for a in every if a["status"] in actions.OPEN),
+                    "by_level": Counter(a["level"] for a in every if a["status"] in actions.OPEN),
+                    "overdue": sum(1 for a in every if actions.overdue(a.get("due"), a["status"], now)),
+                    "verified_closed_30d": len(closed30)},
+            "statuses": list(actions.STATUSES), "owner_roles": playbooks.OWNERS}
+
+
+@app.post("/api/actions/{aid}/status")
+def set_action_status(aid: str, body: dict = Body(...)):
+    """Move one action along. Rejected transitions say why rather than failing quietly."""
+    a = db.one("SELECT * FROM action WHERE id=?", (aid,))
+    if not a:
+        raise HTTPException(404, "No such action.")
+    nxt = (body.get("status") or "").strip()
+    reason, by, expires = (body.get("reason") or "").strip(), (body.get("by") or "").strip(), (body.get("expires") or "").strip()
+    err = actions.validate(a["status"], nxt, reason, expires)
+    if err:
+        raise HTTPException(400, err)
+    now = db.now()
+    hist = list(a.get("history") or []) + [actions.entry(nxt, by, now, reason)]
+    db.upsert("action", {"id": aid, "status": nxt, "owner": by or a.get("owner"), "updated": now,
+                         "history": hist[-40:],
+                         "verified_closed_at": a.get("verified_closed_at")})
+    # a decision to stop raising this finding is recorded separately, so the pipeline honours it
+    if nxt in actions.NEEDS_REASON:
+        db.upsert("feedback", {"org_id": a["org_id"], "source_key": a["source_key"], "decision": nxt,
+                               "reason": reason, "expires": expires or None, "by": by or "unattributed", "at": now})
+    elif a["status"] in actions.NEEDS_REASON:
+        db.x("DELETE FROM feedback WHERE org_id=? AND source_key=?", (a["org_id"], a["source_key"]))
+    return {"ok": True, "status": nxt}
 
 
 # ------------------------------------------------------------------ prevent
@@ -583,6 +648,7 @@ def org(oid: str):
     return {
         "org": o, "posture": pipeline.posture(oid), "categories": pipeline.CATEGORIES, "inventory": inventory,
         "findings": findings, "critical_assets": crit, "prevent": _org_prevent(o, dom),
+        "actions": [_action_view(a, db.now()) for a in db.q("SELECT * FROM action WHERE org_id=? ORDER BY CASE level WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END, due", (oid,))],
         "footprint": {"domain": dom, "hostnames": len(hosts), "ct_count": ((dom or {}).get("attrs") or {}).get("ct_count", 0),
                       "ips": [{"ip": a["value"], **(a.get("attrs") or {})} for a in ips], "prefixes": [{"cidr": a["value"], **(a.get("attrs") or {})} for a in prefixes],
                       "host_list": [{"host": h["value"], **(h.get("attrs") or {})} for h in hosts],

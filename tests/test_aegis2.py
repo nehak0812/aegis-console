@@ -6,6 +6,8 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from aegis import actions as act  # noqa: E402
+from aegis import playbooks  # noqa: E402
 from aegis.guard import PassiveGuardError, check_url, clean, has_credentials, redact  # noqa: E402
 from aegis.intel import fingerprints as fp  # noqa: E402
 from aegis.intel import prevent  # noqa: E402
@@ -365,3 +367,75 @@ def test_link_types_all_declare_a_confidence():
 def pipeline_link_types():
     from aegis.intel.pipeline import LINK_TYPES
     return list(LINK_TYPES)
+
+
+# --- v2.1 B3: the action lifecycle -------------------------------------------------------------
+def test_low_findings_are_inventory_not_actions():
+    assert act.actionable("critical") and act.actionable("high") and act.actionable("medium")
+    assert not act.actionable("low")
+    assert act.sla_days("low") is None
+
+
+def test_due_dates_follow_the_level():
+    assert act.sla_days("critical") == 7 and act.sla_days("high") == 30 and act.sla_days("medium") == 90
+    due = act.due_date("critical", "2026-01-01T00:00:00Z")
+    assert due.startswith("2026-01-08")
+    assert act.due_date("low", "2026-01-01T00:00:00Z") is None
+
+
+def test_sla_is_overridable_per_deployment(monkeypatch):
+    monkeypatch.setenv("AEGIS_SLA_CRITICAL", "3")
+    assert act.sla_days("critical") == 3
+    monkeypatch.setenv("AEGIS_SLA_CRITICAL", "nonsense")
+    assert act.sla_days("critical") == 7          # falls back rather than crashing
+
+
+@pytest.mark.parametrize("current,nxt,allowed", [
+    ("new", "acknowledged", True), ("new", "in_progress", True), ("acknowledged", "in_progress", True),
+    ("in_progress", "resolved", True), ("new", "false_positive", True), ("new", "accepted_risk", True),
+    ("resolved", "new", True),                     # reopening is allowed
+    ("false_positive", "in_progress", False),      # withdraw it first
+    ("resolved", "acknowledged", False),
+    ("new", "new", False),
+])
+def test_allowed_transitions(current, nxt, allowed):
+    assert act.can_transition(current, nxt) is allowed
+
+
+def test_suppressing_a_finding_requires_a_reason():
+    assert act.validate("new", "false_positive") == "false_positive needs a reason."
+    assert act.validate("new", "false_positive", reason="Not our host") is None
+    assert act.validate("new", "accepted_risk", reason="Compensating control") == "accepted_risk needs an expiry date."
+    assert act.validate("new", "accepted_risk", reason="Compensating control", expires="2027-01-01") is None
+    assert act.validate("new", "nonsense") == "'nonsense' is not a status."
+
+
+def test_accepted_risk_expires_but_false_positive_does_not():
+    today = "2026-06-01"
+    assert act.suppressed("false_positive", None, today) is True
+    assert act.suppressed("accepted_risk", "2026-12-01", today) is True     # still accepted
+    assert act.suppressed("accepted_risk", "2026-01-01", today) is False    # lapsed, so it returns
+    assert act.suppressed("accepted_risk", None, today) is False
+    assert act.suppressed(None, None, today) is False
+
+
+def test_only_an_open_action_can_be_overdue():
+    past, now = "2026-01-01T00:00:00Z", "2026-06-01T00:00:00Z"
+    assert act.overdue(past, "new", now) is True
+    assert act.overdue(past, "in_progress", now) is True
+    assert act.overdue(past, "resolved", now) is False        # closed late is history, not a task
+    assert act.overdue(None, "new", now) is False
+
+
+def test_history_entries_are_attributed_even_when_nobody_signs_in():
+    e = act.entry("in_progress", "  ", "2026-01-01T00:00:00Z")
+    assert e["by"] == "unattributed" and e["status"] == "in_progress"
+    e2 = act.entry("accepted_risk", "N. Kukreja", "2026-01-01T00:00:00Z", reason="Mitigated at the edge")
+    assert e2["by"] == "N. Kukreja" and e2["reason"] == "Mitigated at the edge"
+
+
+def test_every_actionable_rule_has_a_playbook_owner():
+    # an action with no owner role cannot be routed to anyone
+    missing = [r for r, (lvl, scope, _) in RULES.items()
+               if scope == "organisation" and act.actionable(lvl) and r not in playbooks.PLAYBOOKS]
+    assert missing == [], missing

@@ -75,6 +75,20 @@ CREATE TABLE IF NOT EXISTS dependency (
 );
 CREATE INDEX IF NOT EXISTS ix_dep_vendor ON dependency(vendor);
 
+-- v2.1: an action is the record of somebody fixing a finding. Closure is proved by the
+-- finding disappearing on a later scan, not asserted by a person.
+CREATE TABLE IF NOT EXISTS action (
+  id TEXT PRIMARY KEY, org_id TEXT, source_kind TEXT, source_key TEXT, rule_id TEXT,
+  title TEXT, level TEXT, confidence TEXT, owner_role TEXT, owner TEXT, status TEXT,
+  due TEXT, created TEXT, updated TEXT, verified_closed_at TEXT, reopened INTEGER DEFAULT 0, history TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_action_org ON action(org_id, status);
+CREATE INDEX IF NOT EXISTS ix_action_status ON action(status, due);
+-- a decision to stop raising a finding: false_positive until withdrawn, accepted_risk until it expires
+CREATE TABLE IF NOT EXISTS feedback (
+  org_id TEXT, source_key TEXT, decision TEXT, reason TEXT, expires TEXT, by TEXT, at TEXT,
+  PRIMARY KEY (org_id, source_key)
+);
 CREATE TABLE IF NOT EXISTS finding (
   id TEXT PRIMARY KEY, org_id TEXT, category TEXT, title TEXT, detail TEXT, severity TEXT,
   rule_id TEXT, evidence_url TEXT, source_id TEXT, observed TEXT, first_seen TEXT, last_seen TEXT, data TEXT,
@@ -100,7 +114,7 @@ CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, updated TEXT);
 
 JSON_COLS = {"domains", "indices", "aliases", "themes", "entities", "org_ids", "cwes", "exploit_refs",
              "sectors", "countries", "refs", "extra", "attrs", "data", "vendors", "products", "actors",
-             "cves", "sources", "feeds", "tools", "techniques", "cs_targets", "evidence"}
+             "cves", "sources", "feeds", "tools", "techniques", "cs_targets", "evidence", "history"}
 
 # columns added after first release — applied idempotently by init()
 MIGRATIONS = {
