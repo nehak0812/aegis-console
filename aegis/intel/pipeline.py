@@ -152,6 +152,16 @@ def enrich(days: int = 120) -> int:
                     org_ids.insert(0, oid)
         c.execute("UPDATE item SET entities=?, org_ids=? WHERE id=?", (json.dumps(ent), json.dumps(org_ids[:6]), r["id"]))
     c.commit()
+    # AI Incident Database reports carry an MIT taxonomy subdomain rather than the prose the
+    # theme patterns match, so most arrive with no theme at all and never reach the analyst
+    # heatmap. Tag them from the taxonomy instead. Not limited to the enrich window: these are
+    # tagged once and then left alone.
+    for r in db.q("SELECT id, entities, themes FROM item WHERE kind='ai_incident'"):
+        want = themes_for_ai((r.get("entities") or {}).get("mit"))
+        have = r.get("themes") or []
+        if set(want) - set(have):
+            c.execute("UPDATE item SET themes=? WHERE id=?", (json.dumps(sorted(set(have) | set(want))), r["id"]))
+    c.commit()
     # re-resolve leak rows now that the universe and subsidiaries are known
     for l in db.q("SELECT id, victim, domain, org_id FROM leak WHERE org_id IS NULL AND kind != 'stealer'"):
         oid, how = matcher.resolve(l["victim"], l["domain"] or "")
