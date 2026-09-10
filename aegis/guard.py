@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 ALLOWED_SUFFIXES = {
     # registries & identity
     "sec.gov", "gleif.org", "wikidata.org", "githubusercontent.com", "github.com",
+    "iana.org",  # RDAP bootstrap: the authoritative TLD -> RDAP server map
     # vulnerabilities & exploitation
     "cisa.gov", "first.org", "nist.gov", "osv.dev", "empiricalsecurity.com", "cyentia.com", "exploit-db.com",
     "gitlab.com", "msrc.microsoft.com",

@@ -9,14 +9,19 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 from aegis import CACHE_DIR, db, net
+from aegis.guard import allow_host
 from aegis.intel import fingerprints as fp
+from aegis.intel import prevent
 from aegis.intel.entities import norm
 from aegis.registry import Source, collector
 
 DOH = ["https://dns.google/resolve", "https://cloudflare-dns.com/dns-query"]
 CLOUD_FILE = os.path.join(CACHE_DIR, "cloud_ranges.json")
+RPKI_MAX = 25          # prefixes validated per organisation per scan (one RIPEstat call each)
+LOOKALIKE_MAX = 40     # generated variants resolved per organisation per scan (two DNS lookups each)
 INTERESTING = re.compile(r"^(www|mail|webmail|smtp|vpn|sslvpn|remote|portal|sso|login|auth|id|idp|adfs|sts|owa|autodiscover|"
                          r"citrix|gateway|gw|api|apps?|jira|confluence|git|gitlab|jenkins|ftp|sftp|mft|transfer|secure|"
                          r"connect|access|ra|rdweb|extranet|partner|dev|test|staging|uat|admin|cpanel|intranet|shop|store|"
@@ -166,14 +171,21 @@ def spf_parse(txts: list[str]) -> dict | None:
             "lookups": sum(1 for t in toks if re.match(r"(?i)^[+~?-]?(include:|a\b|a:|mx\b|mx:|ptr|exists:|redirect=)", t))}
 
 
-def ct_hostnames(domain: str) -> tuple[list[str], str]:
+def ct_hostnames(domain: str) -> tuple[list[str], str, list[dict]]:
+    """Public hostnames from Certificate Transparency, plus the certificate metadata
+    on the same response (issuer and expiry) — used for CRT-* without a second request,
+    which matters because crt.sh is paced at one call every 3 seconds."""
     names: set[str] = set()
+    certs: list[dict] = []
     src = ""
     try:
         js = net.get_json("https://crt.sh/", params={"q": f"%.{domain}", "output": "json", "exclude": "expired"}, timeout=60, retries=1)
         for r in js or []:
             for n in (r.get("name_value") or "").split("\n"):
                 names.add(n.strip().lower().lstrip("*."))
+            if len(certs) < 600:
+                certs.append({"serial": str(r.get("serial_number") or "")[:40], "issuer": (r.get("issuer_name") or "")[:200],
+                              "not_after": r.get("not_after"), "cn": (r.get("common_name") or "").strip().lower().lstrip("*.")})
         src = "crt.sh"
     except Exception:
         pass
@@ -188,7 +200,60 @@ def ct_hostnames(domain: str) -> tuple[list[str], str]:
         except Exception:
             pass
     names = {n for n in names if n == domain or n.endswith("." + domain)}
-    return sorted(names), src
+    return sorted(names), src, certs
+
+
+# ------------------------------------------------------------------ RDAP (domain lifecycle)
+_RDAP_BASES: dict[str, str] = {}
+
+
+def rdap_bootstrap() -> dict[str, str]:
+    """IANA's authoritative TLD -> RDAP base map, and the only place RDAP hosts are trusted.
+
+    Each server is registered on the passive allow-list here rather than reached by
+    following rdap.org's redirect, so every RDAP host we talk to is one IANA publishes.
+    """
+    global _RDAP_BASES
+    if _RDAP_BASES:
+        return _RDAP_BASES
+    out: dict[str, str] = {}
+    try:
+        js = json.loads(net.cached("https://data.iana.org/rdap/dns.json", 24))
+    except Exception as e:
+        print("[surface] rdap bootstrap", e)
+        return out
+    for entry in js.get("services", []):
+        if len(entry) < 2:
+            continue
+        tlds, urls = entry[0], entry[1]
+        base = next((u for u in urls if str(u).startswith("https://")), None)
+        if not base:
+            continue
+        allow_host(urlparse(base).netloc)
+        for t in tlds:
+            out[str(t).strip().lower()] = base.rstrip("/")
+    _RDAP_BASES = out
+    return out
+
+
+def rdap(domain: str) -> dict | None:
+    base = rdap_bootstrap().get(domain.rsplit(".", 1)[-1].lower())
+    if not base:
+        return None
+    try:
+        return net.get_json(f"{base}/domain/{domain}", timeout=20, retries=1, ok_404=True)
+    except Exception:
+        return None
+
+
+def rpki_state(asn: str, cidr: str) -> str | None:
+    """RIPEstat route-origin validation for one (prefix, origin AS) pair."""
+    try:
+        js = net.get_json("https://stat.ripe.net/data/rpki-validation/data.json",
+                          params={"resource": f"AS{asn}", "prefix": cidr, "sourceapp": "aegis"}, timeout=25, retries=1)
+        return ((js or {}).get("data") or {}).get("status")
+    except Exception:
+        return None
 
 
 def cymru(ip: str) -> dict | None:
@@ -266,7 +331,7 @@ def scan_org(o: dict) -> dict:
             dep(hit[0], hit[1], f"SPF include:{inc}")
 
     # --- certificate transparency hostnames
-    names, ct_src = ct_hostnames(d)
+    names, ct_src, certs = ct_hostnames(d)
     edge = []
     for n in names:
         e = fp.edge_product(n)
@@ -331,15 +396,63 @@ def scan_org(o: dict) -> dict:
             js = net.get_json("https://stat.ripe.net/data/announced-prefixes/data.json", params={"resource": f"AS{a}", "sourceapp": "aegis"}, timeout=30)
             for p in (js.get("data") or {}).get("prefixes", [])[:150]:
                 if ":" not in p["prefix"]:
-                    prefixes.append({"cidr": p["prefix"], "prov": f"announced by AS{a} (registered to organisation)"})
+                    prefixes.append({"cidr": p["prefix"], "prov": f"announced by AS{a} (registered to organisation)", "asn": a})
         except Exception as e:
             print("[surface] ripestat", a, e)
+    # --- routing integrity: is each announced prefix covered by a matching ROA?
+    rpki: dict[str, str] = {}
+    checkable = [p for p in prefixes if p.get("asn")][:RPKI_MAX]
+    if checkable:
+        with ThreadPoolExecutor(4) as ex:
+            for p, st in zip(checkable, ex.map(lambda x: rpki_state(x["asn"], x["cidr"]), checkable)):
+                if st:
+                    rpki[p["cidr"]] = st
     for p in prefixes:
+        at = {"provenance": p["prov"]}
+        if p["cidr"] in rpki:
+            at["rpki"] = rpki[p["cidr"]]
+            at["rpki_asn"] = p["asn"]
         assets.append({"org_id": o["id"], "kind": "prefix", "value": p["cidr"], "source_id": "surface", "first_seen": now, "last_seen": now,
-                       "attrs": {"provenance": p["prov"]}})
+                       "attrs": at})
+
+    # --- domain lifecycle: registrar transfer lock and expiry, from the TLD's own RDAP server
+    rd = prevent.rdap_summary(rdap(d))
+
+    # --- certificates: soonest expiry on a hostname that actually resolves, and CAA conformance
+    live = {h for h, r in resolved.items() if r.get("ips")}
+    allowed = prevent.caa_allowed(hygiene.get("caa"))
+    soonest, offenders = None, []
+    seen_issuers: set[str] = set()
+    for c in certs:
+        if c["cn"] in live:
+            left = prevent.days_until(c["not_after"])
+            if left is not None and left >= 0 and (soonest is None or left < soonest["days"]):
+                soonest = {"days": left, "host": c["cn"], "not_after": c["not_after"], "issuer": c["issuer"]}
+        iss = c["issuer"]
+        if iss and iss not in seen_issuers and prevent.caa_violation(iss, allowed):
+            seen_issuers.add(iss)
+            offenders.append({"issuer": iss, "serial": c["serial"], "cn": c["cn"]})
+    cert_info = {"checked": len(certs), "soonest": soonest, "caa_allowed": sorted(allowed) if allowed is not None else None,
+                 "caa_offenders": offenders[:5]}
+
+    # --- lookalike domains: generated locally, resolved through public resolvers only
+    cands = prevent.lookalikes(d, LOOKALIKE_MAX)
+    if cands:
+        with ThreadPoolExecutor(8) as ex:
+            a_jobs = {c: ex.submit(doh, c, "A") for c in cands}
+            m_jobs = {c: ex.submit(doh, c, "MX") for c in cands}
+            for c in cands:
+                a_rec = [x for x in a_jobs[c].result()[0] if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", x)]
+                mx_rec = [m.split()[-1].rstrip(".").lower() for m in m_jobs[c].result()[0] if m]
+                if not a_rec and not mx_rec:
+                    continue
+                assets.append({"org_id": o["id"], "kind": "lookalike", "value": c, "source_id": "surface", "first_seen": now, "last_seen": now,
+                               "attrs": {"ips": a_rec[:4], "mx": mx_rec[:4], "rule": prevent.lookalike_rule(bool(mx_rec), bool(a_rec))}})
+
     assets.append({"org_id": o["id"], "kind": "domain", "value": d, "source_id": "surface", "first_seen": now, "last_seen": now,
                    "attrs": {"hygiene": hygiene, "ct_count": len(names), "ct_source": ct_src, "edge": edge[:40],
-                             "hostnames_sample": names[:400], "resolved": len(resolved), "owned_asns": sorted(owned_asns)}})
+                             "hostnames_sample": names[:400], "resolved": len(resolved), "owned_asns": sorted(owned_asns),
+                             "rdap": rd, "certs": cert_info}})
     return {"assets": assets, "deps": deps}
 
 
