@@ -47,7 +47,7 @@ RULES: dict[str, tuple[str, str, str]] = {
     "DOM-EXPIRY-30": ("critical", "organisation", "The primary domain expires within 30 days; if it lapses, email and web stop and the name can be re-registered by anyone (RDAP)."),
     "DOM-EXPIRY-90": ("medium",  "organisation", "The primary domain expires within 90 days (RDAP)."),
     # --- certificates (Certificate Transparency) -----------------------------------------------
-    "CRT-CAA-VIOLATION": ("high", "organisation", "A certificate in the public transparency logs was issued by a certificate authority the domain's own CAA record does not authorise (possible mis-issuance or unsanctioned IT)."),
+    "CRT-CAA-VIOLATION": ("medium", "organisation", "A certificate issued after the current CAA policy was observed names a certificate authority the policy does not authorise (possible mis-issuance or unsanctioned IT)."),
     "CRT-EXPIRY-14": ("medium",  "organisation", "A certificate covering a live public hostname expires within 14 days (certificate transparency logs)."),
     # --- routing integrity (RPKI) --------------------------------------------------------------
     "BGP-RPKI-INVALID": ("high", "organisation", "An IP prefix registered to this organisation is announced by an origin its own ROA does not authorise (RPKI invalid — possible hijack or stale ROA)."),

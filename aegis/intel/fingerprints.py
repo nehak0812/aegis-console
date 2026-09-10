@@ -96,9 +96,9 @@ TAKEOVER_PRONE = re.compile(r"\.s3[.-]|\.azurewebsites\.net|\.cloudapp\.|\.traff
 EDGE = [
     (r"fortigate|fortinet|fortivpn|\bfgt\b|forti", "Fortinet", "FortiGate / FortiOS SSL-VPN"),
     (r"globalprotect|\bgp-|panorama|paloalto", "Palo Alto Networks", "PAN-OS GlobalProtect"),
-    (r"pulse|ivanti|connect-secure|\bics\b", "Ivanti", "Connect Secure"),
-    (r"mobileiron|\bepmm\b|\bmdm\b", "Ivanti", "Endpoint Manager Mobile"),
-    (r"citrix|netscaler|\bctx|storefront|receiver", "Citrix", "NetScaler ADC / Gateway"),
+    (r"pulse|ivanti|connect-secure", "Ivanti", "Connect Secure"),   # \bics\b removed: industrial control systems
+    (r"mobileiron|\bepmm\b", "Ivanti", "Endpoint Manager Mobile"),   # \bmdm\b removed: any vendor's MDM
+    (r"citrix|netscaler|\bctx|storefront|citrix-?receiver", "Citrix", "NetScaler ADC / Gateway"),
     (r"anyconnect|\basa\b|ciscovpn", "Cisco", "ASA / Secure Client"),
     (r"sonicwall|\bsma\b|\bsra\b", "SonicWall", "SMA / SonicOS"),
     (r"bigip|big-ip|\bf5\b|\btmui\b", "F5", "BIG-IP"),
@@ -108,16 +108,16 @@ EDGE = [
     (r"\bjira\b", "Atlassian", "Jira Server / Data Center"), (r"confluence", "Atlassian", "Confluence Server / Data Center"),
     (r"bitbucket", "Atlassian", "Bitbucket Server"),
     (r"\bowa\b|exchange|autodiscover", "Microsoft", "Exchange Server"), (r"\badfs\b|\bsts\b", "Microsoft", "AD FS"),
-    (r"rdweb|rdgateway|\brds\b|remotedesktop", "Microsoft", "Remote Desktop Gateway"), (r"sharepoint", "Microsoft", "SharePoint Server"),
+    (r"rdweb|rdgateway|remotedesktop", "Microsoft", "Remote Desktop Gateway"),   # \brds\b removed: also AWS RDS (r"sharepoint", "Microsoft", "SharePoint Server"),
     (r"moveit", "Progress", "MOVEit Transfer"), (r"goanywhere", "Fortra", "GoAnywhere MFT"), (r"crushftp", "CrushFTP", "CrushFTP"),
     (r"\bcleo\b|vltrader|lexicom", "Cleo", "Harmony / VLTrader"), (r"ws_?ftp|whatsup", "Progress", "WS_FTP / WhatsUp Gold"),
-    (r"netweaver|\bfiori\b", "SAP", "NetWeaver"), (r"weblogic|\bebs\b|oracleapps", "Oracle", "E-Business Suite / WebLogic"),
+    (r"netweaver|\bfiori\b", "SAP", "NetWeaver"), (r"weblogic|oracleapps", "Oracle", "E-Business Suite / WebLogic"),   # \bebs\b removed: also AWS EBS
     (r"screenconnect|connectwise", "ConnectWise", "ScreenConnect"), (r"beyondtrust|bomgar", "BeyondTrust", "Remote Support / PRA"),
     (r"simplehelp", "SimpleHelp", "SimpleHelp"), (r"veeam", "Veeam", "Backup & Replication"),
     (r"zimbra", "Synacor", "Zimbra Collaboration"), (r"roundcube", "Roundcube", "Webmail"),
     (r"manageengine|servicedesk|desktopcentral", "Zoho", "ManageEngine"), (r"solarwinds|orion|serv-?u", "SolarWinds", "Orion / Serv-U"),
     (r"kaseya", "Kaseya", "VSA"), (r"barracuda", "Barracuda Networks", "Email Security Gateway"),
-    (r"sophos|\butm\b", "Sophos", "Firewall"), (r"watchguard|firebox", "WatchGuard", "Firebox"),
+    (r"sophos", "Sophos", "Firewall"),   # \butm\b removed: unified threat management is generic (r"watchguard|firebox", "WatchGuard", "Firebox"),
     (r"gitlab", "GitLab", "GitLab CE/EE"), (r"jenkins", "Jenkins", "Jenkins"), (r"sitecore", "Sitecore", "Experience Platform"),
     (r"commvault", "Commvault", "Command Center"), (r"\bprtg\b", "Paessler", "PRTG"),
     (r"\bvpn\b|sslvpn|remote|webvpn", None, "VPN / remote-access gateway (vendor unknown)"),

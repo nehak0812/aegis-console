@@ -1,5 +1,5 @@
 import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState } from 'react'
-import { NavLink, Route, Routes, useNavigate, useLocation } from 'react-router-dom'
+import { Link, NavLink, Route, Routes, useNavigate, useLocation } from 'react-router-dom'
 import { Radar, Flame, Building2, ShieldAlert, Skull, Crosshair, Brain, Database, Search, Cpu, Activity, Moon, CloudMoon, Sun , Menu, X } from 'lucide-react'
 import { useApi } from './lib/api'
 import { ago } from './lib/format'
@@ -30,6 +30,24 @@ const Adversaries = lazy(() => import('./pages/Adversaries'))
 const Analyst = lazy(() => import('./pages/Analyst'))
 const AIRisk = lazy(() => import('./pages/AIRisk'))
 const Sources = lazy(() => import('./pages/Sources'))
+
+function NotFound() {
+  return (
+    <div className="page-head">
+      <div>
+        <div className="eyebrow">Not found</div>
+        <h2>That page does not exist</h2>
+        <p>The address may be mistyped, or the page may have moved. Everything the console offers is in the navigation.</p>
+        <div className="row wrap" style={{ gap: 8, marginTop: 12 }}>
+          <Link className="btn" to="/">Situation</Link>
+          <Link className="btn" to="/orgs">Organisations</Link>
+          <Link className="btn" to="/incidents">Incidents &amp; impact</Link>
+          <Link className="btn" to="/sources">Sources &amp; method</Link>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export type Range = '7' | '30' | '90'
 const RangeCtx = createContext<{ range: Range; setRange: (r: Range) => void }>({ range: '30', setRange: () => {} })
@@ -85,6 +103,7 @@ export default function App() {
   const [theme, setThemeState] = useState<ThemeName>(THEME)
   const changeTheme = (t: ThemeName) => { applyTheme(t); setThemeState(t) }
   const { data: counts } = useApi<any>('/nav-counts', 60)
+  const version = useApi<any>('/health', 600).data?.version || ''
   const loc = useLocation()
   // the rail becomes an off-canvas drawer on small screens; it closes on navigation and on Escape
   const [navOpen, setNavOpen] = useState(false)
@@ -124,6 +143,7 @@ export default function App() {
           </nav>
           <div className="rail-foot">
             Passive, open sources only. No scanning, no purchased data, credentials never stored.
+            <div style={{ marginTop: 6, opacity: .75 }}>AEGIS <span className="mono">{version}</span></div>
           </div>
         </aside>
         <div className="main">
@@ -153,6 +173,7 @@ export default function App() {
                 <Route path="/analyst" element={<Analyst />} />
                 <Route path="/ai" element={<AIRisk />} />
                 <Route path="/sources" element={<Sources />} />
+                <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
           </main>

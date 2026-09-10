@@ -86,16 +86,25 @@ def rpki_rule(state: str | None) -> str | None:
 # CAA records name a CA by domain; CT logs name it by its certificate subject. This maps the
 # common issuers between the two. Deliberately incomplete: an issuer that is not listed here is
 # never reported as a violation, because a false "possible mis-issuance" is worse than a miss.
+# A certificate authority may publish several CAA identifiers, and brands it has acquired keep
+# issuing under their own names. Micron authorises "www.digicert.com"; a DigiCert certificate
+# whose CN reads "GeoTrust TLS RSA CA G1" is issued under that same authorisation. Matching a CA
+# to one domain only produced false "possible mis-issuance" findings against both.
+# Sources: each CA's published CAA identifier, per CCADB's "CAA Identifiers" field.
+# A brand maps to its parent's full identifier set, so GeoTrust resolves to DigiCert's.
+_DIGICERT = ("digicert.com", "www.digicert.com", "geotrust.com", "rapidssl.com", "thawte.com",
+             "symantec.com", "digicert.ne.jp", "cybertrust.ne.jp")
+_SECTIGO = ("sectigo.com", "comodo.com", "comodoca.com", "usertrust.com", "trust-provider.com")
 CA_DOMAINS: dict[str, tuple[str, ...]] = {
     "let's encrypt": ("letsencrypt.org",),
-    "digicert": ("digicert.com",),
-    "amazon": ("amazon.com", "amazontrust.com", "awstrust.com"),
-    "sectigo": ("sectigo.com",),
-    "comodo": ("sectigo.com", "comodoca.com"),
+    "digicert": _DIGICERT, "geotrust": _DIGICERT, "rapidssl": _DIGICERT, "thawte": _DIGICERT,
+    "symantec": _DIGICERT, "cybertrust": _DIGICERT,
+    "sectigo": _SECTIGO, "comodo": _SECTIGO, "usertrust": _SECTIGO,
+    "amazon": ("amazon.com", "amazontrust.com", "awstrust.com", "amazonaws.com"),
     "globalsign": ("globalsign.com",),
     "godaddy": ("godaddy.com", "starfieldtech.com"),
     "starfield": ("starfieldtech.com", "godaddy.com"),
-    "entrust": ("entrust.net",),
+    "entrust": ("entrust.net", "affirmtrust.com"),
     "google trust services": ("pki.goog", "google.com"),
     "microsoft": ("microsoft.com",),
     "apple": ("apple.com",),
@@ -105,11 +114,16 @@ CA_DOMAINS: dict[str, tuple[str, ...]] = {
     "ssl.com": ("ssl.com",),
     "identrust": ("identrust.com",),
     "certum": ("certum.pl", "certum.eu"),
-    "quovadis": ("quovadisglobal.com", "digicert.com"),
+    "quovadis": ("quovadisglobal.com",) + _DIGICERT,
     "swisssign": ("swisssign.com",),
     "harica": ("harica.gr",),
     "trustasia": ("trustasia.com",),
     "e-tugra": ("e-tugra.com.tr",),
+    "telia": ("telia.com", "telia.fi"),
+    "trustwave": ("trustwave.com", "securetrust.com"),
+    "firmaprofesional": ("firmaprofesional.com",),
+    "camerfirma": ("camerfirma.com",),
+    "chunghwa telecom": ("cht.com.tw", "publicca.hinet.net"),
 }
 _CAA_ISSUE = re.compile(r'(?i)\bissue(wild)?\s+"?([^";\s]*)')
 
@@ -141,14 +155,42 @@ def issuer_domains(issuer_name: str | None) -> tuple[str, ...]:
     return ()
 
 
-def caa_violation(issuer_name: str | None, allowed: set[str] | None) -> bool:
-    """True only when a known CA issued a certificate the domain's own CAA policy excludes."""
+def covered_by(name: str | None, domain: str) -> bool:
+    """Is this certificate name inside the domain whose CAA policy we hold?
+
+    Certificate Transparency returns a certificate whenever *any* of its names match, so a
+    query for micron.com also returns certificates covering micron.cn. Those are a different
+    registrable domain with their own — possibly absent — CAA policy, and judging them against
+    this domain's policy is how the rule produced false findings.
+    """
+    n = (name or "").strip().lower().lstrip("*.")
+    d = (domain or "").strip().lower()
+    return bool(n) and bool(d) and (n == d or n.endswith("." + d))
+
+
+def caa_violation(issuer_name: str | None, allowed: set[str] | None,
+                  issued: str | None = None, policy_seen: str | None = None) -> bool:
+    """True only when a known CA issued a certificate this domain's CAA policy excludes.
+
+    `issued` is the certificate's not_before and `policy_seen` is when this exact CAA set was
+    first observed. CAA is evaluated by the CA at issuance time (RFC 8659), so a certificate
+    issued before the current policy existed proves nothing about it. Without both timestamps
+    the case is not evaluable and produces no finding.
+    """
     if allowed is None:            # no policy published -> nothing to violate
         return False
     domains = issuer_domains(issuer_name)
     if not domains:                # unrecognised CA -> stay quiet rather than guess
         return False
-    return not any(d in allowed for d in domains)
+    if not any(d in allowed for d in domains):
+        return issued is not None and policy_seen is not None and issued >= policy_seen
+    return False
+
+
+def caa_key(caa_records: list[str] | None) -> str:
+    """A stable identity for a CAA policy, so a change resets when it was first observed."""
+    allowed = caa_allowed(caa_records)
+    return "" if allowed is None else "|".join(sorted(allowed))
 
 
 # --- lookalike domains --------------------------------------------------------------------------

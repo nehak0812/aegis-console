@@ -421,7 +421,8 @@ def scan_org(o: dict) -> dict:
     # --- certificates: soonest expiry on a hostname that actually resolves, and CAA conformance
     live = {h for h, r in resolved.items() if r.get("ips")}
     allowed = prevent.caa_allowed(hygiene.get("caa"))
-    soonest, offenders = None, []
+    policy_key = prevent.caa_key(hygiene.get("caa"))
+    soonest, candidates = None, []
     seen_issuers: set[str] = set()
     for c in certs:
         if c["cn"] in live:
@@ -429,11 +430,16 @@ def scan_org(o: dict) -> dict:
             if left is not None and left >= 0 and (soonest is None or left < soonest["days"]):
                 soonest = {"days": left, "host": c["cn"], "not_after": c["not_after"], "issuer": c["issuer"]}
         iss = c["issuer"]
-        if iss and iss not in seen_issuers and prevent.caa_violation(iss, allowed):
+        # only judge names this domain's own CAA policy governs
+        if not iss or iss in seen_issuers or not prevent.covered_by(c["cn"], d):
+            continue
+        # the issuance-time test needs the policy's first-seen time, which only store_scan
+        # knows, so gather candidates here and let it decide
+        if prevent.caa_violation(iss, allowed, "9999", ""):
             seen_issuers.add(iss)
-            offenders.append({"issuer": iss, "serial": c["serial"], "cn": c["cn"]})
+            candidates.append({"issuer": iss, "serial": c["serial"], "cn": c["cn"], "issued": c.get("not_before")})
     cert_info = {"checked": len(certs), "soonest": soonest, "caa_allowed": sorted(allowed) if allowed is not None else None,
-                 "caa_offenders": offenders[:5]}
+                 "caa_key": policy_key, "caa_seen": now, "caa_candidates": candidates[:8], "caa_offenders": []}
 
     # --- lookalike domains: generated locally, resolved through public resolvers only
     cands = prevent.lookalikes(d, LOOKALIKE_MAX)
@@ -456,8 +462,29 @@ def scan_org(o: dict) -> dict:
     return {"assets": assets, "deps": deps}
 
 
+def _carry_caa_policy(oid: str, assets: list[dict]) -> None:
+    """Keep the time this CAA policy was first observed, and resolve which certificates it judges.
+
+    CAA is evaluated by the issuing authority at issuance time, so a certificate predating the
+    current policy says nothing about it. Only certificates issued after AEGIS first saw this
+    exact policy are evaluable; everything else produces no finding. On a fresh database that
+    means the rule stays quiet for weeks, which is correct rather than a fault.
+    """
+    dom = next((a for a in assets if a["kind"] == "domain"), None)
+    cert = (dom or {}).get("attrs", {}).get("certs")
+    if not cert:
+        return
+    old = db.one("SELECT attrs FROM asset WHERE org_id=? AND kind='domain'", (oid,)) or {}
+    prev_certs = ((old.get("attrs") or {}).get("certs")) or {}
+    # an unchanged policy keeps its original first-seen time; a changed one starts again
+    if prev_certs.get("caa_key") and prev_certs.get("caa_key") == cert.get("caa_key") and prev_certs.get("caa_seen"):
+        cert["caa_seen"] = prev_certs["caa_seen"]
+    cert["caa_offenders"] = [c for c in cert.pop("caa_candidates", []) if c.get("issued") and c["issued"] >= cert["caa_seen"]][:5]
+
+
 def store_scan(o: dict, res: dict) -> None:
     c = db.conn()
+    _carry_caa_policy(o["id"], res["assets"])
     # replace the previous snapshot (kept as history in first_seen of carried-over rows)
     prev = {(r["kind"], r["value"]): r["first_seen"] for r in db.q("SELECT kind, value, first_seen FROM asset WHERE org_id=?", (o["id"],))}
     c.execute("DELETE FROM asset WHERE org_id=?", (o["id"],))

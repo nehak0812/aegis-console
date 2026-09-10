@@ -512,7 +512,7 @@ RULE_CAT = {"DW-LEAK": "darkweb", "DW-ACCESS": "darkweb", "DW-FORUM": "darkweb",
             "DW-DDOS": "chatter", "THR-": "chatter", "INC-": "disclosure", "DISC-": "disclosure", "CMP-": "compromise",
             "VUL-": "vulns", "SURF-RISKY": "exposure", "SURF-TAKEOVER": "exposure", "SURF-EDGE": "critical", "SURF-LARGE": "footprint",
             "HYG-": "hygiene", "TP-": "software", "AI-": "ai",
-            "DOM-": "hygiene", "LOOK-": "hygiene", "BGP-": "footprint", "CRT-": "footprint"}
+            "DOM-": "hygiene", "CRT-": "hygiene", "BGP-": "exposure", "LOOK-": "chatter"}
 CRITICAL_CLASSES = [  # passive "critical asset" classes from hostname + fingerprint
     ("Identity & SSO", re.compile(r"^(sso|login|auth|id|idp|adfs|sts|okta|ping|saml|oauth|identity)[\d-]*\.", re.I)),
     ("Remote access & VPN", re.compile(r"^(vpn|sslvpn|remote|ra|citrix|gateway|gw|webvpn|connect|access|rdweb|globalprotect|anyconnect|pulse)[\d-]*\.", re.I)),

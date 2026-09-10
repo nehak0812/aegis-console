@@ -227,3 +227,87 @@ def test_rdap_hosts_are_not_trusted_until_iana_registers_them():
     with pytest.raises(PassiveGuardError):
         check_url("https://rdap.example-registry.invalid/domain/x.com")
     assert check_url("https://data.iana.org/rdap/dns.json")
+
+
+# --- v2.0.1: CAA false positives, edge fingerprints, category mapping -----------------------------
+# Both cases below were live High findings on production against Micron.
+MICRON_CAA_fixture = ['0 issuewild "www.digicert.com', '0 issue "www.digicert.com', '0 issue "letsencrypt.org',
+                      '0 issue "pki.goog', '0 iodef "mailto:webmaster@micron.com', '0 issue "amazon.com']
+
+
+def test_caa_ignores_a_certificate_for_a_different_registrable_domain():
+    # crt.sh returns a certificate when ANY of its names match, so a micron.com query also
+    # returns micron.cn certificates. That domain has its own (absent) policy.
+    assert prevent.covered_by("apps.micron.cn", "micron.com") is False
+    assert prevent.covered_by("my.uptale.micron.com", "micron.com") is True
+    assert prevent.covered_by("micron.com", "micron.com") is True
+    assert prevent.covered_by("*.micron.com", "micron.com") is True
+    assert prevent.covered_by("notmicron.com", "micron.com") is False
+
+
+def test_digicert_brands_resolve_to_the_digicert_caa_identifiers():
+    allowed = prevent.caa_allowed(MICRON_CAA_fixture)
+    assert "www.digicert.com" in allowed
+    # the exact two issuers that produced the false findings
+    for issuer in ["C=US, O=DigiCert Inc, CN=DigiCert Global G2 TLS RSA SHA256 2020 CA1",
+                   "C=US, O=DigiCert Inc, OU=www.digicert.com, CN=GeoTrust TLS RSA CA G1"]:
+        assert prevent.caa_violation(issuer, allowed, "2026-01-01", "2025-01-01") is False, issuer
+
+
+def test_caa_needs_the_certificate_to_postdate_the_observed_policy():
+    allowed = {"letsencrypt.org"}
+    unauthorised = "C=US, O=DigiCert Inc, CN=DigiCert Global G2"
+    # issued after the policy was first observed -> evaluable, and it is a violation
+    assert prevent.caa_violation(unauthorised, allowed, "2026-06-01", "2026-01-01") is True
+    # issued before the policy existed -> proves nothing, so no finding
+    assert prevent.caa_violation(unauthorised, allowed, "2024-06-01", "2026-01-01") is False
+    # missing either timestamp -> not evaluable
+    assert prevent.caa_violation(unauthorised, allowed, None, "2026-01-01") is False
+    assert prevent.caa_violation(unauthorised, allowed, "2026-06-01", None) is False
+
+
+def test_caa_key_changes_only_when_the_policy_changes():
+    a = prevent.caa_key(['0 issue "letsencrypt.org', '0 issue "amazon.com'])
+    b = prevent.caa_key(['0 issue "amazon.com', '0 issue "letsencrypt.org'])   # same set, different order
+    c = prevent.caa_key(['0 issue "letsencrypt.org'])
+    assert a == b and a != c
+    assert prevent.caa_key(None) == ""
+
+
+@pytest.mark.parametrize("host,expected", [
+    ("github-receiver.micron.com", None),              # the false positive being fixed
+    ("citrix-receiver.example.com", "Citrix"),
+    ("netscaler.example.com", "Citrix"),
+    ("ics.example.com", None),                         # industrial control systems, not Ivanti
+    ("mdm.example.com", None),                         # any vendor's MDM
+    ("rds.example.com", None),                         # also AWS RDS
+    ("connect-secure.example.com", "Ivanti"),
+])
+def test_edge_patterns_name_a_product_or_stay_silent(host, expected):
+    hit = fp.edge_product(host)
+    assert (hit[0] if hit else None) == expected, host
+
+
+def test_generic_remote_access_hostnames_have_no_vendor():
+    # they may still be inventory, but a vendor-less entry can never raise a -KEV rule
+    hit = fp.edge_product("sslvpn.example.com")
+    assert hit is not None and hit[0] is None
+
+
+def test_newer_rules_are_categorised_deliberately():
+    expected = {"CRT-CAA-VIOLATION": "hygiene", "CRT-EXPIRY-14": "hygiene",
+                "DOM-LOCK": "hygiene", "DOM-EXPIRY-30": "hygiene", "DOM-EXPIRY-90": "hygiene",
+                "HYG-DKIM-NONE": "hygiene", "HYG-SPF-LOOKUPS": "hygiene", "HYG-TLSRPT": "hygiene",
+                "HYG-NS-SINGLE": "hygiene", "BGP-RPKI-INVALID": "exposure", "BGP-RPKI-NONE": "exposure",
+                "LOOK-MX": "chatter", "LOOK-LIVE": "chatter"}
+    for rid, cat in expected.items():
+        assert rule_cat(rid) == cat, rid
+
+
+def test_only_surf_large_falls_through_to_footprint():
+    fell_back = [r for r, v in RULES.items() if v[1] == "organisation" and rule_cat(r) == "footprint"]
+    assert fell_back == ["SURF-LARGE"], fell_back
+
+
+def test_caa_violation_is_medium_not_high():
+    assert rule("CRT-CAA-VIOLATION")[0] == "medium"

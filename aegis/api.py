@@ -15,7 +15,8 @@ from aegis.intel import prevent
 from aegis.intel.entities import country_code, matcher, norm, reg_domain
 from aegis.intel.themes import THEME_FAMILY, theme_catalogue
 
-app = FastAPI(title="AEGIS Cyber Risk Operations Center", version="2.0")
+VERSION = os.environ.get("AEGIS_VERSION", "2.0.1")
+app = FastAPI(title="AEGIS Cyber Risk Operations Center", version=VERSION)
 UTC = timezone.utc
 
 # Optional access control for hosted deployments: set AEGIS_PASSWORD (and optionally AEGIS_USER, default "aegis").
@@ -45,7 +46,7 @@ async def _basic_auth(request, call_next):
 @app.get("/api/health")
 def health():
     """Liveness for Railway / any orchestrator: the process is up and the database answers."""
-    return {"ok": True, "orgs": db.scalar("SELECT count(*) FROM org"), "time": db.now()}
+    return {"ok": True, "version": VERSION, "orgs": db.scalar("SELECT count(*) FROM org"), "time": db.now()}
 
 
 def ts(days: float) -> str:
