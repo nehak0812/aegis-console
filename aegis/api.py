@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from aegis import ROOT, db, rating, scheduler
 from aegis.intel import pipeline
-from aegis.intel.entities import matcher, norm, reg_domain
+from aegis.intel.entities import country_code, matcher, norm, reg_domain
 from aegis.intel.themes import THEME_FAMILY, theme_catalogue
 
 app = FastAPI(title="AEGIS Cyber Risk Operations Center", version="2.0")
@@ -368,11 +368,16 @@ def org(oid: str):
 @app.post("/api/orgs")
 def add_org(body: dict = Body(...)):
     name, domain = (body.get("name") or "").strip(), reg_domain(body.get("domain") or "")
-    if not name or "." not in domain:
-        raise HTTPException(400, "name and a valid domain are required")
+    if not name:
+        raise HTTPException(400, "An organisation name is required.")
+    if "." not in domain:
+        raise HTTPException(400, "A primary domain is required, e.g. ril.com — it is what the passive scan looks up.")
+    country, bad = country_code(body.get("country"))
+    if bad:
+        raise HTTPException(400, bad)
     oid = "user-" + re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:50]
     db.upsert("org", {"id": oid, "name": name, "legal_name": name, "domain": domain, "domains": [domain], "website": f"https://{domain}",
-                      "country": (body.get("country") or "").upper()[:2] or None, "sector": body.get("sector") or None,
+                      "country": country, "sector": body.get("sector") or None,
                       "indices": ["Added by analyst"], "tier": "watch", "added": db.now(), "source_id": "analyst"})
     matcher.build()
     scheduler.scan_now(oid)

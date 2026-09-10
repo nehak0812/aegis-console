@@ -164,6 +164,9 @@ input.txt:focus, select.txt:focus { border-color: var(--accent); }
 .btn { background: var(--raised-2); border: 1px solid var(--hair-2); border-radius: 8px; padding: 6px 12px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--hair-2); }
+.btn.primary:disabled:hover { border-color: var(--accent); }
 
 /* ---------- lists & tables ---------- */
 .feed { display: flex; flex-direction: column; }

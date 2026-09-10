@@ -6,28 +6,41 @@ import { Card, Sev, SevBar, Table, Seg, Empty, When } from '../components/ui'
 import WorldMap from '../components/WorldMap'
 import { HBar } from '../components/charts'
 import { SEV_COLOR } from '../lib/chartTheme'
-import { countryName } from '../lib/format'
+import { countryName, COUNTRY } from '../lib/format'
 
 function AddOrg({ onDone }: { onDone: (id: string) => void }) {
   const [f, setF] = useState({ name: '', domain: '', country: '', sector: '' })
   const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  // the domain is what the passive scan resolves, so the server rejects the org without one
+  const ready = f.name.trim().length > 1 && f.domain.trim().includes('.')
   const submit = async () => {
-    setErr('')
+    if (!ready || busy) return
+    setErr(''); setBusy(true)
     try {
       const r = await api<{ id: string }>('/orgs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) })
       onDone(r.id)
-    } catch (e: any) { setErr(String(e.message || e)) }
+    } catch (e: any) { setErr(String(e.message || e)) } finally { setBusy(false) }
   }
   return (
     <Card title="Add an organisation to monitor" sub="a passive scan starts immediately (public DNS, CT, indexes only)">
       <div className="row wrap" style={{ gap: 8 }}>
-        <input className="txt" placeholder="Organisation name" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
-        <input className="txt" placeholder="Primary domain e.g. example.com" value={f.domain} onChange={e => setF({ ...f, domain: e.target.value })} />
-        <input className="txt" placeholder="Country (ISO-2)" style={{ width: 120 }} value={f.country} onChange={e => setF({ ...f, country: e.target.value })} />
-        <input className="txt" placeholder="Sector (optional)" value={f.sector} onChange={e => setF({ ...f, sector: e.target.value })} />
-        <button className="btn primary" onClick={submit}><Plus size={14} />Add & scan</button>
-        {err && <span style={{ color: SEV_COLOR.critical }}>{err}</span>}
+        <input className="txt" placeholder="Organisation name" style={{ minWidth: 200 }} value={f.name}
+          onChange={e => setF({ ...f, name: e.target.value })} onKeyDown={e => e.key === 'Enter' && submit()} />
+        <input className="txt" placeholder="Primary domain — required, e.g. ril.com" style={{ minWidth: 260 }} value={f.domain}
+          onChange={e => setF({ ...f, domain: e.target.value })} onKeyDown={e => e.key === 'Enter' && submit()} />
+        <input className="txt" list="country-options" placeholder="Country e.g. India or IN" style={{ minWidth: 170 }} value={f.country}
+          onChange={e => setF({ ...f, country: e.target.value })} onKeyDown={e => e.key === 'Enter' && submit()} />
+        <datalist id="country-options">{Object.entries(COUNTRY).map(([a2, n]) => <option key={a2} value={n} />)}</datalist>
+        <input className="txt" placeholder="Sector (optional)" value={f.sector}
+          onChange={e => setF({ ...f, sector: e.target.value })} onKeyDown={e => e.key === 'Enter' && submit()} />
+        <button className="btn primary" disabled={!ready || busy} onClick={submit}><Plus size={14} />{busy ? 'Adding…' : 'Add & scan'}</button>
       </div>
+      {(err || !ready) && (
+        <div style={{ marginTop: 8, fontSize: 12, color: err ? SEV_COLOR.critical : 'var(--muted)' }}>
+          {err || 'A name and a primary domain are required — the domain is what the passive scan looks up.'}
+        </div>
+      )}
     </Card>
   )
 }
