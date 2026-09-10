@@ -63,7 +63,7 @@ export default function Orgs() {
       <div className="grid g-main-side" style={{ marginBottom: 14 }}>
         <Card title="Where they are" sub="HQ location · colour = current level · click to open" className="flush">
           <div style={{ padding: '0 16px 16px' }}>
-            <WorldMap height={330} points={rows.filter((r: any) => r.lat != null).map((r: any) => ({ id: r.id, lat: r.lat, lon: r.lon, level: r.level || 'low', label: r.name, sub: `${r.sector || ''} · ${r.level || 'unassessed'}`, onClick: () => nav(`/orgs/${r.id}`), pulse: r.level === 'critical' }))} />
+            <WorldMap zoomable points={rows.filter((r: any) => r.lat != null).map((r: any) => ({ id: r.id, lat: r.lat, lon: r.lon, level: r.level || 'low', label: r.name, sub: `${r.sector || ''} · ${r.level || 'unassessed'}`, onClick: () => nav(`/orgs/${r.id}`), pulse: r.level === 'critical' }))} />
           </div>
         </Card>
         <Card title="Current levels" sub={`${rows.length} organisations in view`}>

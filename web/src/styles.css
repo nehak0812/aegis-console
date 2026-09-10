@@ -196,6 +196,13 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .theme-seg button { display: inline-flex; align-items: center; gap: 5px; }
 @media (max-width: 1280px) { .theme-seg .lbl { display: none; } }
 .map-grat { fill: none; stroke: rgba(57,135,229,.06); stroke-width: .6; }
+.map-wrap.zoomable svg { cursor: grab; touch-action: none; }
+.map-wrap.zoomable.grabbing svg { cursor: grabbing; }
+.map-zoom { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 2; }
+.map-zoom .btn { padding: 6px; background: var(--surface); }
+.map-zoom .btn:disabled { opacity: .35; cursor: default; }
+.map-zoom .btn:disabled:hover { border-color: var(--hair-2); }
+.map-hint { position: absolute; left: 12px; bottom: 10px; font-size: 11px; color: var(--muted); pointer-events: none; }
 .ping { transform-box: fill-box; transform-origin: center; animation: ping 2.6s ease-out infinite; }
 @keyframes ping { 0% { opacity: .8; transform: scale(.4); } 80% { opacity: 0; transform: scale(3.2); } 100% { opacity: 0; transform: scale(3.2); } }
 .arc-flow { stroke-dasharray: 4 6; animation: flow 1.2s linear infinite; }
