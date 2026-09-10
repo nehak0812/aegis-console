@@ -1,0 +1,12 @@
+.venv
+**/__pycache__
+**/.pytest_cache
+data
+legacy_v1
+web/node_modules
+web/dist
+*.zip
+*.html
+!web/index.html
+aegis-data.js
+.git
