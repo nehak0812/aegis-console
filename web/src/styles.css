@@ -107,7 +107,7 @@ button { font: inherit; color: inherit; }
 .g-side-main { grid-template-columns: 360px minmax(0, 1fr); }
 .span2 { grid-column: span 2; } .span3 { grid-column: span 3; }
 @media (max-width: 1280px) { .g4 { grid-template-columns: repeat(2, minmax(0,1fr)); } .g-main-side, .g-side-main { grid-template-columns: 1fr; } }
-@media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .rail { display: none; } .g2, .g3, .g4 { grid-template-columns: 1fr; } .span2, .span3 { grid-column: auto; } }
+@media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .g2, .g3, .g4 { grid-template-columns: 1fr; } .span2, .span3 { grid-column: auto; } }
 
 .card { background: var(--surface); border: 1px solid var(--hair); border-radius: var(--radius); padding: 16px; min-width: 0; position: relative; }
 .card.flush { padding: 0; }
@@ -257,3 +257,53 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 abbr.gloss { text-decoration: underline dotted var(--hair-2); text-underline-offset: 3px; cursor: help; }
 abbr.gloss:hover { text-decoration-color: var(--accent); color: var(--ink); }
 .tbl th abbr.gloss { text-decoration-color: var(--hair-2); }
+
+/* ---------- small screens ---------- */
+/* The nav rail is a permanent column on desktop and an off-canvas drawer below 900px.
+   It is never display:none — hiding it removed every navigation link on a phone. */
+.nav-toggle { display: none; background: var(--surface); border: 1px solid var(--hair); border-radius: 8px;
+  color: var(--ink); cursor: pointer; padding: 8px; align-items: center; justify-content: center; flex: none; }
+.nav-toggle:hover { border-color: var(--accent); }
+.nav-backdrop { display: none; }
+
+@media (max-width: 900px) {
+  .nav-toggle { display: inline-flex; }
+  .shell { grid-template-columns: 1fr; }
+  .rail { position: fixed; top: 0; bottom: 0; left: 0; right: auto; width: min(84vw, 300px); max-width: 300px;
+    z-index: 60; transition: transform .22s ease; box-shadow: var(--shadow); transform: translateX(-100%); }
+  .shell.nav-open .rail { transform: none; }
+  .shell.nav-open .nav-backdrop { display: block; position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .5); }
+  /* larger hit areas: a 16px icon link is not a tap target */
+  .rail .nav a { padding: 11px 10px; }
+
+  .topbar { padding: 8px 12px; gap: 8px; }
+  .live { display: none; }                 /* collection status is on Sources & method */
+  .page { padding: 14px 12px 72px; }
+  .page-head { gap: 10px; margin-bottom: 14px; }
+  .page-head h2 { font-size: 19px; }
+  .card { padding: 13px; }
+
+  /* Inline grid-template-columns beat a class-based media query, so several pages kept
+     four-up stat rows on a phone. This is the one place !important is warranted. */
+  .grid[style] { grid-template-columns: 1fr !important; }
+  .grid { gap: 10px; }
+
+  /* comfortable touch targets */
+  .btn, .seg button, .tabs button, .pill.btn { min-height: 38px; }
+  .seg button { padding: 8px 12px; }
+  .multi-btn { min-height: 38px; }
+  .search input { padding: 10px 12px 10px 34px; }
+
+  /* wide content scrolls inside its own container rather than the page */
+  .tbl-wrap { -webkit-overflow-scrolling: touch; }
+  .tbl th, .tbl td { padding: 8px; }
+  .filters { gap: 6px; }
+  .multi { width: 100% !important; }
+  .search[style] { max-width: none !important; }
+}
+
+@media (max-width: 560px) {
+  .page-head h2 { font-size: 17px; }
+  .stat .value { font-size: 26px; }
+  .tabs button { padding: 9px 10px; font-size: 13px; }
+}

@@ -1,6 +1,6 @@
 import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState } from 'react'
 import { NavLink, Route, Routes, useNavigate, useLocation } from 'react-router-dom'
-import { Radar, Flame, Building2, ShieldAlert, Skull, Crosshair, Brain, Database, Search, Cpu, Activity, Moon, CloudMoon, Sun } from 'lucide-react'
+import { Radar, Flame, Building2, ShieldAlert, Skull, Crosshair, Brain, Database, Search, Cpu, Activity, Moon, CloudMoon, Sun , Menu, X } from 'lucide-react'
 import { useApi } from './lib/api'
 import { ago } from './lib/format'
 import { Seg } from './components/ui'
@@ -86,15 +86,24 @@ export default function App() {
   const changeTheme = (t: ThemeName) => { applyTheme(t); setThemeState(t) }
   const { data: counts } = useApi<any>('/nav-counts', 60)
   const loc = useLocation()
-  useEffect(() => { document.querySelector('.page')?.scrollTo(0, 0) }, [loc.pathname])
+  // the rail becomes an off-canvas drawer on small screens; it closes on navigation and on Escape
+  const [navOpen, setNavOpen] = useState(false)
+  useEffect(() => { document.querySelector('.page')?.scrollTo(0, 0); setNavOpen(false) }, [loc.pathname])
+  useEffect(() => {
+    if (!navOpen) return
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setNavOpen(false) }
+    document.addEventListener('keydown', esc)
+    return () => document.removeEventListener('keydown', esc)
+  }, [navOpen])
   const N = (to: string, icon: any, label: string, count?: number, hot?: boolean) => {
     const I = icon
     return <NavLink to={to} end={to === '/'} className={({ isActive }) => (isActive ? 'active' : '')}><I size={16} />{label}{count !== undefined && <span className={`count ${hot ? 'hot' : ''}`}>{count}</span>}</NavLink>
   }
   return (
     <RangeCtx.Provider value={{ range, setRange }}>
-      <div className="shell">
-        <aside className="rail">
+      <div className={`shell${navOpen ? ' nav-open' : ''}`}>
+        <div className="nav-backdrop" onClick={() => setNavOpen(false)} aria-hidden="true" />
+        <aside className="rail" id="aegis-nav">
           <div className="brand">
             <div className="brand-mark"><Radar size={20} style={{ color: 'var(--accent)' }} /></div>
             <div><h1>AEGIS</h1><small>Cyber Risk Operations Center</small></div>
@@ -119,6 +128,10 @@ export default function App() {
         </aside>
         <div className="main">
           <header className="topbar">
+            <button className="nav-toggle" aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+              aria-expanded={navOpen} aria-controls="aegis-nav" onClick={() => setNavOpen(o => !o)}>
+              {navOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
             <GlobalSearch />
             <Seg options={[{ id: '7', label: '7d' }, { id: '30', label: '30d' }, { id: '90', label: '90d' }]} value={range} onChange={setRange} />
             <LiveStatus />
