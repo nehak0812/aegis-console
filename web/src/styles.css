@@ -294,6 +294,11 @@ abbr.gloss:hover { text-decoration-color: var(--accent); color: var(--ink); }
   .multi-btn { min-height: 38px; }
   .search input { padding: 10px 12px 10px 34px; }
 
+  /* the map must not trap a scrolling finger: vertical drags scroll the page,
+     horizontal drags still pan the map, and the +/- buttons still zoom */
+  .map-wrap.zoomable svg { touch-action: pan-y; }
+  .map-hint { display: none; }   /* "scroll to zoom" is mouse language */
+
   /* wide content scrolls inside its own container rather than the page */
   .tbl-wrap { -webkit-overflow-scrolling: touch; }
   .tbl th, .tbl td { padding: 8px; }
