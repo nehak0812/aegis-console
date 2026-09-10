@@ -28,29 +28,66 @@ function Check({ ok, warn, label, detail, url, state, linkLabel }:
   )
 }
 
-/** A finding with the playbook for fixing it: what it prevents, who owns it, effort, steps. */
-function Action({ f, book }: { f: any; book: any }) {
+const STATUS_LABEL: Record<string, string> = {
+  new: 'New', acknowledged: 'Acknowledged', in_progress: 'In progress',
+  resolved: 'Resolved', accepted_risk: 'Accepted risk', false_positive: 'False positive',
+}
+
+/** One action: what it prevents, who owns it, when it is due, and how to move it along. */
+function Action({ a, onChanged }: { a: any; onChanged: () => void }) {
   const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const book = a.playbook
+  const move = async (status: string) => {
+    // the server requires these where the change suppresses a finding that is still true
+    const needsReason = status === 'accepted_risk' || status === 'false_positive'
+    const reason = needsReason ? window.prompt(`Why is this ${STATUS_LABEL[status].toLowerCase()}?`) : null
+    if (needsReason && !reason) return
+    const expires = status === 'accepted_risk' ? window.prompt('Accepted until when? (YYYY-MM-DD)') : null
+    if (status === 'accepted_risk' && !expires) return
+    const by = window.prompt('Your name, for the history') || ''
+    setBusy(true); setErr('')
+    try {
+      await api(`/actions/${a.id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, reason, expires, by }) })
+      onChanged()
+    } catch (e: any) { setErr(String(e.message || e)) } finally { setBusy(false) }
+  }
+  const next: string[] = a.status === 'new' ? ['acknowledged', 'in_progress', 'accepted_risk', 'false_positive']
+    : a.status === 'acknowledged' ? ['in_progress', 'accepted_risk', 'false_positive']
+      : a.status === 'in_progress' ? ['accepted_risk', 'false_positive'] : []
   return (
     <div className="feed-item" style={{ gridTemplateColumns: '1fr', gap: 6 }}>
       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-        <Sev level={f.severity} rule={f.rule_id} />
-        <Conf level={f.confidence} />
-        <b style={{ flex: 1, minWidth: 200 }}>{f.title}</b>
-        {book && <span className="pill">{book.owner}</span>}
+        <Sev level={a.level} rule={a.rule_id} />
+        <Conf level={a.confidence} />
+        <b style={{ flex: 1, minWidth: 180 }}>{a.title}</b>
+        {a.owner_role && <span className="pill">{a.owner_role}</span>}
         {book && <span className="pill" title={`about ${book.effort_label}`}>{book.effort}</span>}
+        <span className={`pill${a.overdue ? '' : ''}`} style={a.overdue ? { color: 'var(--high)' } : undefined}>
+          {STATUS_LABEL[a.status] || a.status}{a.due ? ` · due ${String(a.due).slice(0, 10)}` : ''}{a.overdue ? ' · overdue' : ''}
+        </span>
         <button className="pill btn" onClick={() => setOpen(o => !o)}>{open ? 'Hide' : 'How to fix'}</button>
       </div>
       {book && <div className="m" style={{ color: 'var(--ink-2)' }}><b>Prevents:</b> {gloss(book.prevents)}</div>}
-      {open && book && (
+      {a.reopened > 0 && <div className="m" style={{ color: 'var(--medium)' }}>Reopened {a.reopened}× — the finding came back after being closed.</div>}
+      {a.verified_closed_at && <div className="m muted">Verified closed {String(a.verified_closed_at).slice(0, 10)} — the finding is no longer produced.</div>}
+      {open && (
         <div className="stack" style={{ gap: 6, paddingLeft: 4, borderLeft: '2px solid var(--hair-2)', marginLeft: 2 }}>
-          <ol style={{ margin: 0, paddingLeft: 18 }}>
-            {book.steps.map((st: string, i: number) => <li key={i} style={{ marginBottom: 3 }}>{gloss(st)}</li>)}
-          </ol>
-          {book.controls?.length > 0 && (
-            <div className="m muted">Indicative control references: {book.controls.join(' · ')}</div>
+          {book && <ol style={{ margin: 0, paddingLeft: 18 }}>{book.steps.map((st: string, i: number) => <li key={i} style={{ marginBottom: 3 }}>{gloss(st)}</li>)}</ol>}
+          {book?.controls?.length > 0 && <div className="m muted">Indicative control references: {book.controls.join(' · ')}</div>}
+          {next.length > 0 && (
+            <div className="row wrap" style={{ gap: 6 }}>
+              <span className="m muted">Move to:</span>
+              {next.map(st => <button key={st} className="pill btn" disabled={busy} onClick={() => move(st)}>{STATUS_LABEL[st]}</button>)}
+            </div>
           )}
-          {f.evidence_url?.startsWith('http') && <div><SourceLink url={f.evidence_url} label="Evidence" /></div>}
+          {err && <div className="m" style={{ color: 'var(--critical)' }}>{err}</div>}
+          {(a.history || []).length > 0 && (
+            <div className="m muted">{(a.history as any[]).slice(-3).map((h, i) =>
+              <div key={i}>{String(h.at).slice(0, 10)} · {STATUS_LABEL[h.status] || h.status} · {h.by}{h.reason ? ` — ${h.reason}` : ''}</div>)}</div>
+          )}
         </div>
       )}
     </div>
@@ -95,16 +132,13 @@ export default function OrgDetail() {
     return m
   }, [data])
   // every hook must run before the loading return below, or the hook count changes between renders
-  const books = usePlaybooks()
-  const actions = useMemo(() => ((data?.findings as any[]) || [])
-    .filter(f => books[f.rule_id])
-    .sort((a, b) => (SEV_RANK.indexOf(a.severity) - SEV_RANK.indexOf(b.severity))
-      || (EFFORT_ORDER[books[a.rule_id].effort] - EFFORT_ORDER[books[b.rule_id].effort])), [data, books])
+  const acts: any[] = useMemo(() => (data?.actions as any[]) || [], [data])
+  const openActs = useMemo(() => acts.filter(a => a.open), [acts])
   const byOwner = useMemo(() => {
     const m: Record<string, any[]> = {}
-    for (const f of actions) (m[books[f.rule_id].owner] ||= []).push(f)
+    for (const a of openActs) (m[a.owner_role || 'Unassigned'] ||= []).push(a)
     return Object.entries(m).sort((a, b) => b[1].length - a[1].length)
-  }, [actions, books])
+  }, [openActs])
   if (!data) return <div className="muted">Loading organisation…</div>
   const o = data.org, p = data.posture, fp = data.footprint
   const scanned = !!fp.scanned
@@ -211,10 +245,10 @@ export default function OrgDetail() {
       {tab === 'prevent' && (
         <div className="stack" style={{ gap: 14 }}>
           <div className="grid g4">
-            <Stat label="Preventable findings" value={actions.length} hint="findings with a documented fix" />
-            <Stat label="Needing attention first" value={actions.filter(a => a.severity === 'critical' || a.severity === 'high').length} hint="Critical or High" />
-            <Stat label="Quick wins" value={actions.filter(a => books[a.rule_id]?.effort === 'S').length} hint="hours of work, not days" />
-            <Stat label="Teams involved" value={byOwner.length} hint="owners with something to do" />
+            <Stat label="Open actions" value={openActs.length} hint="Critical, High and Medium — Low stays inventory" />
+            <Stat label="Overdue" value={openActs.filter(a => a.overdue).length} hint="past the due date for their level" />
+            <Stat label="Quick wins" value={openActs.filter(a => a.playbook?.effort === 'S').length} hint="hours of work, not days" />
+            <Stat label="Verified closed" value={acts.filter(a => a.verified_closed_at).length} hint="proved fixed by a later scan" />
           </div>
 
           <Card title="Controls, next to peers in the same sector"
@@ -237,11 +271,11 @@ export default function OrgDetail() {
           </Card>
 
           {byOwner.map(([owner, rows]) => (
-            <Card key={owner} title={owner} sub={`${rows.length} to action`}>
-              <div className="feed">{rows.map((f: any) => <Action key={f.id} f={f} book={books[f.rule_id]} />)}</div>
+            <Card key={owner} title={owner} sub={`${rows.length} open${rows.filter((r: any) => r.overdue).length ? ` · ${rows.filter((r: any) => r.overdue).length} overdue` : ''}`}>
+              <div className="feed">{rows.map((a: any) => <Action key={a.id} a={a} onChanged={refetch} />)}</div>
             </Card>
           ))}
-          {!actions.length && <Card><Empty>No preventable findings — everything open here is historic reporting rather than a fixable control.</Empty></Card>}
+          {!openActs.length && <Card><Empty>No open actions. Low findings stay as inventory rather than becoming work.</Empty></Card>}
         </div>
       )}
 
