@@ -479,13 +479,19 @@ def store_scan(o: dict, res: dict) -> None:
 
 @collector(Source(
     id="surface", name="External attack surface (passive)", category="Attack surface",
-    publisher="Google & Cloudflare DNS-over-HTTPS · crt.sh / Cert Spotter CT logs · Shodan InternetDB · Team Cymru · RIPEstat",
+    publisher="Google & Cloudflare DNS-over-HTTPS · crt.sh / Cert Spotter CT logs · Shodan InternetDB · Team Cymru · RIPEstat · IANA + registry RDAP",
     homepage="https://internetdb.shodan.io/", url="https://dns.google/resolve", cadence_min=15,
-    licence="DoH, CT, RIPEstat, Team Cymru: free · Shodan InternetDB: free for non-commercial use",
+    licence="DoH, CT, RIPEstat, Team Cymru: free · RDAP: registry registration data, published under each registry's terms · "
+            "Shodan InternetDB: free for non-commercial use",
     feeds=[{"publisher": "crt.sh", "url": "https://crt.sh/"}, {"publisher": "Cert Spotter", "url": "https://api.certspotter.com/v1/issuances"},
-           {"publisher": "Shodan InternetDB", "url": "https://internetdb.shodan.io/"}, {"publisher": "RIPEstat", "url": "https://stat.ripe.net/"}],
-    notes="Rotates through monitored organisations (~6 per run, full cycle every few days). Reads public DNS and third-party indexes only — "
-          "no packets are ever sent to the organisation's hosts."))
+           {"publisher": "Shodan InternetDB", "url": "https://internetdb.shodan.io/"}, {"publisher": "RIPEstat", "url": "https://stat.ripe.net/"},
+           {"publisher": "IANA RDAP bootstrap", "url": "https://data.iana.org/rdap/dns.json"}],
+    notes="Rotates through monitored organisations (12 per run, least-recently-scanned first, so the full watchlist is covered in about 14 hours). "
+          "Reads public DNS and third-party indexes only — "
+          "no packets are ever sent to the organisation's hosts. Preventive checks on the same pass: registrar transfer lock and registration "
+          "expiry from the TLD's own RDAP server (resolved through the IANA bootstrap, never by following a redirect); RPKI route-origin "
+          "validation of announced prefixes via RIPEstat; certificate expiry and CAA conformance from the Certificate Transparency response "
+          "already fetched; and lookalike domains generated locally and resolved through public resolvers."))
 def collect_surface() -> int:
     orgs = db.q("SELECT id, name, domain FROM org WHERE tier='watch' AND domain IS NOT NULL ORDER BY deep_scanned IS NOT NULL, deep_scanned LIMIT 12")
 
