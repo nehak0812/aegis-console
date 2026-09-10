@@ -131,6 +131,9 @@ def search(q: str = Query(..., min_length=2)):
     return out
 
 
+THEME_TREE_ORDER = [f for f in dict.fromkeys(THEME_FAMILY.values()) if f]
+
+
 # ------------------------------------------------------------------ prevent
 # Controls the surface scan already measures for every organisation. Reported as adoption
 # percentages across monitored organisations — never as a score, and never ranked.
@@ -625,7 +628,7 @@ def rescan(oid: str):
 
 # ------------------------------------------------------------------ exposure & vulnerabilities
 @app.get("/api/exposure")
-def exposure(days: int = 30):
+def exposure(days: int = 30, category: str | None = None):
     kev = db.q("SELECT cve, vendor, product, name, kev_added, ransomware, epss, epss_pct, cvss, severity, severity_rule, exploit_refs, kev_due FROM vuln WHERE kev_added IS NOT NULL")
     weekly = Counter()
     for v in kev:
@@ -646,7 +649,13 @@ def exposure(days: int = 30):
             pm[r["org_id"]][r["category"]] = r["severity"]
     names = {o["id"]: o["name"] for o in db.q("SELECT id, name FROM org")}
     score = lambda m: sorted([rating.RANK[v] for v in m.values()])[:3]
-    top = sorted(pm.items(), key=lambda kv: score(kv[1]))[:30]
+    # Ranking by overall exposure buries a whole category: an organisation with an AI finding
+    # and little else never reaches the top 30, so that column reads empty. ?category= ranks
+    # by one category first, which is how a reader checks a column that looks blank.
+    if category:
+        top = sorted(pm.items(), key=lambda kv: (rating.RANK.get(kv[1].get(category), 9), score(kv[1])))[:30]
+    else:
+        top = sorted(pm.items(), key=lambda kv: score(kv[1]))[:30]
     ports = Counter()
     edge = Counter()
     cloud = Counter()
@@ -789,9 +798,10 @@ def actor(aid: str):
 
 # ------------------------------------------------------------------ analyst view
 @app.get("/api/analyst")
-def analyst(days: int = 30):
+def analyst(days: int = 30, family: str | None = None):
     now = datetime.now(UTC)
-    items = db.q("SELECT id, title, url, publisher, pub_type, kind, published, themes, entities FROM item WHERE published > ? AND kind IN ('news','research','advisory','forum','chatter')", (ts(63),))
+    # ai_incident belongs here: the AI Incident Database is research reporting like any other
+    items = db.q("SELECT id, title, url, publisher, pub_type, kind, published, themes, entities FROM item WHERE published > ? AND kind IN ('news','research','advisory','forum','chatter','ai_incident')", (ts(63),))
     win = [i for i in items if i["published"] > ts(days)]
     # theme counts, momentum, recurrence
     cnt = Counter(t for i in win for t in i.get("themes") or [])
@@ -830,7 +840,20 @@ def analyst(days: int = 30):
         for t in i.get("themes") or []:
             by_pub[i["publisher"]][t] += 1
     pubs = sorted(by_pub, key=lambda p: -sum(by_pub[p].values()))[:24]
-    cols = [t["theme"] for t in themes[:14]]
+    # Ranking columns by raw volume alone hides every small family permanently: AI themes carry
+    # single-figure counts and never reached the top 14. Take the leaders overall, then guarantee
+    # each family one column, keeping volume order so the heatmap still reads left-to-right.
+    if family:
+        cols = [t["theme"] for t in themes if t["family"] == family]
+    else:
+        keep = {t["theme"] for t in themes[:10]}
+        shown_families = {t["family"] for t in themes[:10] if t["family"]}
+        for t in themes:
+            if t["family"] and t["family"] not in shown_families:
+                shown_families.add(t["family"])
+                keep.add(t["theme"])
+        cols = [t["theme"] for t in themes if t["theme"] in keep]
+    cols = cols[:18]
     matrix = [{"id": p, "type": pub_type.get(p), "data": [{"x": t, "y": by_pub[p].get(t, 0)} for t in cols]} for p in pubs]
     ptype = defaultdict(Counter)
     for i in win:
@@ -869,6 +892,7 @@ def analyst(days: int = 30):
         latest[t] = [{"title": i["title"], "url": i["url"], "publisher": i["publisher"], "published": i["published"]}
                      for i in sorted(win, key=lambda i: i["published"], reverse=True) if t in (i.get("themes") or [])][:6]
     return {"window_items": len(win), "history_days": history_days, "mature": mature, "themes": themes, "bump": bump, "matrix": matrix, "columns": cols,
+            "families": [f for f in THEME_TREE_ORDER if any(t["family"] == f for t in themes)], "family": family,
             "publisher_types": {k: dict(v) for k, v in ptype.items()}, "entities": top_ent, "cooccurrence": co,
             "who": who, "latest": latest, "families": sorted(set(THEME_FAMILY.values()))}
 

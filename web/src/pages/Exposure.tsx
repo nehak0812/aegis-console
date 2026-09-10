@@ -32,7 +32,8 @@ export default function Exposure() {
   const [sp] = useSearchParams()
   const [tab, setTab] = useState<'exploited' | 'watchlist' | 'compromised'>('exploited')
   const [vendor, setVendor] = useState('')
-  const { data } = useApi<any>(`/exposure?days=${range}`, 300)
+  const [category, setCategory] = useState('')
+  const { data } = useApi<any>(`/exposure?days=${range}${category ? `&category=${category}` : ''}`, 300)
   const VCOL = [EMPTY, SEV_COLOR.low, SEV_COLOR.medium, SEV_COLOR.high, SEV_COLOR.critical]
   if (!data) return <div className="muted">Loading exposure…</div>
   const cve = sp.get('cve')

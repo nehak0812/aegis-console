@@ -13,7 +13,9 @@ from datetime import datetime, timedelta, timezone
 
 from aegis import db
 from aegis.intel.entities import matcher, norm, reg_domain
+from aegis.intel import fingerprints as fp
 from aegis.intel import prevent
+from aegis.intel.themes import themes_for_ai
 from aegis.rating import RANK, RISKY_PORTS, rule, worst
 
 UTC = timezone.utc
@@ -373,7 +375,8 @@ PROVIDER_KINDS = {"Supply-chain / provider compromise", "Provider outage", "Data
                   "Disclosed incident (SEC 8-K)", "Dark-web sale / leak claim"}
 EDGE_VENDORS = {"fortinet", "ivanti", "citrix", "sonicwall", "palo alto networks", "f5", "juniper", "check point", "progress", "fortra",
                 "crushftp", "cleo", "connectwise", "beyondtrust", "simplehelp", "veeam", "synacor", "roundcube", "zoho", "solarwinds",
-                "kaseya", "barracuda networks", "sophos", "watchguard", "paessler", "commvault", "gitlab", "jenkins", "sitecore"}
+                "kaseya", "barracuda networks", "sophos", "watchguard", "paessler", "commvault", "gitlab", "jenkins", "sitecore",
+                "langflow", "berriai"}
 GENERIC = {"server", "and", "data", "center", "multiple", "products", "the", "for", "of", "software", "services", "service", "suite",
            "enterprise", "platform", "manager", "microsoft", "google", "apple", "oracle", "cisco", "windows", "linux", "internet",
            "information", "http", "web", "os", "ios", "kernel", "chrome", "chromium", "office", "system", "systems", "client"}
@@ -614,8 +617,22 @@ def build_findings() -> int:
             elif vulns:
                 F(oid, "VUL-EXPOSED", f"{a['value']} reports {len(vulns)} known CVE(s)", f"{', '.join(vulns[:8])}", url, "surface", a["last_seen"], a["value"], {"cves": vulns[:30]})
             risky = [f"{p}/{RISKY_PORTS[p]}" for p in at.get("ports") or [] if p in RISKY_PORTS]
+            confirmed_ai, unconfirmed_ai = fp.ai_services(at.get("ports"), at.get("cpes"), at.get("hosts"))
+            if confirmed_ai:
+                F(oid, "AI-EXPOSED-SERVICE", f"{a['value']} exposes {', '.join(confirmed_ai)}",
+                  f"Hostnames: {', '.join(at.get('hosts') or [])}. Self-hosted AI services are frequently deployed without authentication.",
+                  url, "surface", a["last_seen"], a["value"] + ":ai", {"services": confirmed_ai, "confidence": "confirmed"})
+            elif unconfirmed_ai:
+                F(oid, "AI-EXPOSED-PORT", f"{a['value']} exposes a port used by {', '.join(unconfirmed_ai)}",
+                  "The port is shared with much other software, so the product is not confirmed — verify before acting.",
+                  url, "surface", a["last_seen"], a["value"] + ":aiport", {"ports": unconfirmed_ai, "confidence": "unconfirmed"})
             if risky:
                 F(oid, "SURF-RISKY-PORT", f"{a['value']} exposes {', '.join(risky)}", f"Hostnames: {', '.join(at.get('hosts') or [])}.", url, "surface", a["last_seen"], a["value"], {"ports": at.get("ports")})
+        elif a["kind"] == "hostname" and not at.get("edge") and fp.ai_host(a["value"], at.get("cname")):
+            plat = fp.ai_host(a["value"], at.get("cname"))
+            F(oid, "AI-HOST", f"{a['value']} indicates an AI platform ({plat})",
+              (f"CNAME to {at.get('cname')}." if at.get("cname") else "") + " Inventory: confirm it is governed and access-controlled.",
+              f"https://crt.sh/?q={a['value']}", "surface", a["last_seen"], a["value"], {"platform": plat, "confidence": "likely"})
         elif a["kind"] == "prefix" and at.get("rpki"):
             rid = prevent.rpki_rule(at["rpki"])
             if rid:
@@ -708,6 +725,46 @@ def build_findings() -> int:
             if (at.get("ct_count") or 0) >= 1500:
                 F(oid, "SURF-LARGE", f"{at['ct_count']:,} public hostnames in certificate transparency", "Large external footprint to govern.",
                   f"https://crt.sh/?q=%25.{d}", "surface", a["last_seen"], d)
+
+    # --- generative-AI services evidenced in public DNS
+    # fingerprints.py already records these as dependencies with category "AI services";
+    # this turns that inventory into a finding so the AI risk category is not blank.
+    ai_deps = defaultdict(list)
+    for r in db.q("SELECT org_id, vendor, evidence, seen FROM dependency WHERE category='AI services'"):
+        ai_deps[r["org_id"]].append(r)
+    for oid, rows in ai_deps.items():
+        if oid not in orgs:
+            continue
+        vendors = sorted({r["vendor"] for r in rows})
+        F(oid, "AI-SERVICE-DNS", f"Uses {', '.join(vendors)} (domain-verification record in DNS)",
+          "Evidence: " + " · ".join(f"{r['vendor']}: {r['evidence']}" for r in rows[:4]) +
+          ". Inventory only — confirm the usage is sanctioned and covered by policy.",
+          f"https://dns.google/resolve?name={orgs[oid]['domain']}&type=TXT", "surface",
+          max(r["seen"] for r in rows), "ai-services", {"vendors": vendors, "confidence": "confirmed"})
+
+    # --- an AI provider the organisation uses had an incident recently
+    # This is an AI-risk finding, not a supplier breach: build_impacts deliberately keeps
+    # AI-misuse stories out of DEPENDENCY linkage, and nothing here changes that.
+    ai_incidents = defaultdict(list)
+    for inc in db.q("SELECT id, title, vendors, severity, last_seen FROM incident WHERE last_seen > ?", (ts(30),)):
+        if inc["severity"] == "low":          # ignore minor outages
+            continue
+        for v in inc.get("vendors") or []:
+            ai_incidents[str(v).strip().lower()].append(inc)
+    for oid, rows in ai_deps.items():
+        if oid not in orgs:
+            continue
+        for vendor in sorted({r["vendor"] for r in rows}):
+            hits = ai_incidents.get(vendor.lower()) or []
+            if not hits:
+                continue
+            worst_inc = min(hits, key=lambda i: RANK.get(i["severity"], 9))
+            # one finding per provider per organisation, so a single provider incident
+            # does not produce a stream of repeats
+            F(oid, "AI-PROVIDER-INC", f"{vendor} had an incident in the last 30 days",
+              f"{worst_inc['title'][:200]} This organisation's DNS shows it uses {vendor}.",
+              f"/incidents/{worst_inc['id']}", "status", worst_inc["last_seen"], f"ai-prov:{vendor}",
+              {"vendor": vendor, "incident_id": worst_inc["id"], "confidence": "likely"})
 
     # --- filings & named-victim reporting
     for it in db.q("SELECT id, title, url, published, org_ids FROM item WHERE kind='filing'"):

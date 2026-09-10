@@ -120,6 +120,10 @@ EDGE = [
     (r"sophos", "Sophos", "Firewall"),   # \butm\b removed: unified threat management is generic (r"watchguard|firebox", "WatchGuard", "Firebox"),
     (r"gitlab", "GitLab", "GitLab CE/EE"), (r"jenkins", "Jenkins", "Jenkins"), (r"sitecore", "Sitecore", "Experience Platform"),
     (r"commvault", "Commvault", "Command Center"), (r"\bprtg\b", "Paessler", "PRTG"),
+    # AI platforms that carry CISA KEV entries. Vendor and product match the vuln table exactly
+    # so recent_kev_for() can join. Ollama and Open WebUI are deliberately absent: AI-HOST
+    # covers them as inventory, and listing them in both places would double-count.
+    (r"langflow", "Langflow", "Langflow"), (r"litellm", "BerriAI", "LiteLLM"),
     (r"\bvpn\b|sslvpn|remote|webvpn", None, "VPN / remote-access gateway (vendor unknown)"),
 ]
 DKIM_SELECTORS = ["selector1", "selector2", "google", "k1", "s1", "s2", "default", "dkim", "mail", "mandrill", "pp1", "mimecast20190124", "sm", "m1"]
@@ -143,3 +147,40 @@ def edge_product(hostname: str):
         if rx.search(labels):
             return vendor, prod
     return None
+
+
+# ---------------------------------------------------------------- self-hosted AI / ML services
+# Ports whose service is distinctive enough that the port alone identifies the product.
+AI_PORTS = {11434: "Ollama", 8265: "Ray dashboard", 7860: "Gradio", 6333: "Qdrant", 19530: "Milvus"}
+# Ports far too common to attribute on their own — these need product evidence (a CPE or a
+# hostname keyword) before anything is claimed. 8888 and 5000 run half the internet's dev servers.
+AI_PORTS_AMBIGUOUS = {8888: "Jupyter", 5000: "MLflow"}
+AI_HOST_RX = re.compile(r"ollama|jupyter|mlflow|langflow|litellm|open-?webui|comfyui|kubeflow", re.I)
+AI_CNAME_RX = re.compile(r"\.openai\.azure\.com\.?$", re.I)
+
+
+def ai_services(ports, cpes=None, hosts=None):
+    """Self-hosted AI/ML services on an internet-facing host.
+
+    Returns (confirmed, unconfirmed): confirmed names the product from a distinctive port, or
+    from an ambiguous port backed by product evidence. Unconfirmed is an ambiguous port with
+    nothing to corroborate it, which is reported at a lower level and says so.
+    """
+    text = " ".join(list(cpes or []) + list(hosts or [])).lower()
+    confirmed, unconfirmed = [], []
+    for p in ports or []:
+        if p in AI_PORTS:
+            confirmed.append(f"{AI_PORTS[p]} ({p})")
+        elif p in AI_PORTS_AMBIGUOUS:
+            name = AI_PORTS_AMBIGUOUS[p]
+            (confirmed if name.lower() in text else unconfirmed).append(f"{name} ({p})")
+    return confirmed, unconfirmed
+
+
+def ai_host(hostname: str, cname: str | None = None) -> str | None:
+    """An AI platform named by the hostname itself, or by a managed-service CNAME target."""
+    if cname and AI_CNAME_RX.search(cname):
+        return "Azure OpenAI"
+    first = (hostname or "").split(".")[0]
+    m = AI_HOST_RX.search(first)
+    return m.group(0).lower() if m else None

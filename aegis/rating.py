@@ -66,6 +66,11 @@ RULES: dict[str, tuple[str, str, str]] = {
     "SURF-TAKEOVER": ("high",    "organisation", "A public hostname's CNAME points to a cloud resource that no longer resolves (possible subdomain takeover)."),
     "DW-LEAK-SUB":  ("high",     "organisation", "A subsidiary (per GLEIF) was named on a ransomware / extortion leak site in the last 90 days."),
     "AI-INCIDENT":  ("medium",   "organisation", "Named as deployer or developer in an AI Incident Database report in the last 12 months."),
+    "AI-SERVICE-DNS": ("low",    "organisation", "Uses generative-AI services, evidenced by the provider's domain-verification record in public DNS — inventory only."),
+    "AI-PROVIDER-INC": ("medium", "organisation", "A generative-AI provider this organisation uses (public DNS evidence) had an AI-system incident, an AI Incident Database report or a major service incident in the last 30 days."),
+    "AI-EXPOSED-SERVICE": ("high", "organisation", "An internet-facing host of this organisation exposes a self-hosted AI or machine-learning service, identified by port and product. These are frequently deployed with no authentication. Only the hostnames the passive scan resolves are covered."),
+    "AI-EXPOSED-PORT": ("medium", "organisation", "An internet-facing host exposes a port commonly used by a self-hosted AI or machine-learning service, without product confirmation — the port alone is not proof."),
+    "AI-HOST":      ("low",      "organisation", "Public hostnames or CNAMEs indicate a self-hosted or managed AI platform — inventory only."),
     # --- vulnerabilities ---------------------------------------------------------------------
     "V-KEV-RANSOM": ("critical", "vulnerability", "In CISA KEV and known to be used in ransomware campaigns."),
     "V-KEV-NEW":    ("critical", "vulnerability", "Added to CISA KEV in the last 30 days (fresh, active exploitation)."),

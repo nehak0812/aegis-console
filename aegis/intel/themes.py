@@ -40,6 +40,9 @@ THEME_TREE: dict[str, dict[str, list[str]]] = {
         "Cybercrime economy": [r"ransom (payment|paid|demand)", r"cryptocurrency (theft|laundering)", r"crypto (heist|drain)", r"money mule", r"malware[- ]as[- ]a[- ]service", r"ransomware[- ]as[- ]a[- ]service|\bRaaS\b"],
     },
     "AI & emerging": {
+        # AI Incident Database reports carry an MIT taxonomy subdomain rather than prose that the
+        # keyword patterns match, so this theme is assigned by MIT_THEMES below, not by regex.
+        "AI incidents & harms": [r"\bai incident\b", r"\bai harm"],
         "AI-enabled attacks": [r"(ai|llm|chatgpt|gemini|claude)[- ](generated|powered|assisted|enabled) (phishing|malware|attack)", r"deepfake", r"voice clon", r"ai agents? (abuse|attack)", r"weaponi[sz]ed ai"],
         "AI system security": [r"prompt injection", r"jailbreak", r"model (theft|poisoning|extraction)", r"data poisoning", r"\bMCP\b server", r"ai agent (security|risk|vulnerab)", r"llm (vulnerab|security)"],
         "AI governance & regulation": [r"ai act", r"ai (governance|regulation|policy)", r"responsible ai", r"ai safety"],
@@ -81,6 +84,23 @@ def themes_for(text: str) -> list[str]:
             if rx.search(text):
                 out.append(t)
     return out
+
+
+# MIT AI Risk Repository subdomain -> the themes it maps onto. Only the subdomains with a clear
+# cyber-security reading are mapped; the rest carry the generic AI theme alone.
+MIT_THEMES = {
+    "2.1": ["Data breach & leak", "AI system security"],
+    "2.2": ["AI system security"],
+    "4.2": ["AI-enabled attacks"],
+    "4.3": ["AI-enabled attacks"],
+    "6.5": ["AI governance & regulation"],
+}
+AI_THEME = "AI incidents & harms"
+
+
+def themes_for_ai(mit: str | None) -> list[str]:
+    """Themes for an AI Incident Database report. Every one of them is an AI incident."""
+    return sorted(set(MIT_THEMES.get((mit or "").strip(), []) + [AI_THEME]))
 
 
 def sectors_for(text: str) -> list[str]:

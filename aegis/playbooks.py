@@ -11,7 +11,7 @@ no reference is confidently known, the list is left empty rather than filled wit
 # The five roles a preventive fix realistically lands on. Kept small on purpose: a longer
 # list produces arguments about ownership instead of fixes.
 OWNERS = ["Email & DNS administration", "IT operations", "Security operations",
-          "Network engineering", "Procurement & vendor management"]
+          "Network engineering", "Procurement & vendor management", "Legal & compliance"]
 EFFORT = {"S": "hours", "M": "days", "L": "weeks, or a project"}
 
 PLAYBOOKS: dict[str, dict] = {
@@ -288,6 +288,58 @@ PLAYBOOKS: dict[str, dict] = {
                   "Check the breached credentials against your own directory for reuse.",
                   "Confirm your notification obligations with legal and privacy."],
         "controls": ["NIST CSF 2.0 PR.AA-01", "NIST CSF 2.0 RS.CO-02"],
+    },
+    # --- AI ------------------------------------------------------------------------------------------
+    "AI-SERVICE-DNS": {
+        "owner": "Procurement & vendor management", "effort": "S",
+        "prevents": "Generative-AI use going ungoverned. The verification record proves a team set the service up deliberately; the question is whether anyone approved what goes into it.",
+        "steps": ["Confirm who owns the account and what business use it serves.",
+                  "Check whether the contract and data-processing terms cover the data being sent.",
+                  "Make sure the service is inside your acceptable-use and data-classification policy.",
+                  "Record it in the third-party inventory rather than leaving it as a DNS record nobody reads."],
+        "controls": ["NIST CSF 2.0 GV.SC-01", "NIST CSF 2.0 ID.AM-02"],
+    },
+    "AI-PROVIDER-INC": {
+        "owner": "Security operations", "effort": "S",
+        "prevents": "An AI provider's incident affecting you unnoticed. Your DNS shows you use them; that makes their incident your inbox.",
+        "steps": ["Read the provider's own incident notice before acting on second-hand reporting.",
+                  "Establish whether your data or API keys are in scope.",
+                  "Rotate provider API keys if the incident touched credentials or logs.",
+                  "Record the assessment, including if the answer is 'no impact'."],
+        "controls": ["NIST CSF 2.0 GV.SC-08", "NIST CSF 2.0 RS.MA-01"],
+    },
+    "AI-EXPOSED-SERVICE": {
+        "owner": "IT operations", "effort": "M",
+        "prevents": "An unauthenticated AI service on the internet. Most of these ship with no authentication at all, and an exposed model server leaks prompts, documents and often the ability to run code.",
+        "steps": ["Confirm the service should be internet-facing — it almost never should.",
+                  "Put it behind the VPN or an authenticating proxy, or restrict it to known addresses.",
+                  "Check the logs for access you cannot account for, and assume prompts and uploaded documents were readable.",
+                  "Re-scan to confirm it is no longer reachable."],
+        "controls": ["NIST CSF 2.0 PR.IR-01", "NIST CSF 2.0 PR.AA-01", "CIS Controls v8 4.1"],
+    },
+    "AI-EXPOSED-PORT": {
+        "owner": "IT operations", "effort": "S",
+        "prevents": "Guessing. The port is shared with a lot of ordinary software, so this is a prompt to check rather than a finding to act on.",
+        "steps": ["Identify what is actually listening on the port.",
+                  "If it is an AI or notebook service, treat it as AI-EXPOSED-SERVICE.",
+                  "If it is something else, no action is needed here."],
+        "controls": ["NIST CSF 2.0 ID.AM-01"],
+    },
+    "AI-HOST": {
+        "owner": "IT operations", "effort": "S",
+        "prevents": "AI platforms running outside the asset inventory, which is where shadow AI usually starts.",
+        "steps": ["Confirm the platform has a named owner and is in the asset inventory.",
+                  "Check it requires authentication and is patched — several of these have CISA KEV entries.",
+                  "Confirm what data it is allowed to process."],
+        "controls": ["NIST CSF 2.0 ID.AM-01", "NIST CSF 2.0 ID.AM-02"],
+    },
+    "AI-INCIDENT": {
+        "owner": "Legal & compliance", "effort": "M",
+        "prevents": "An AI harm involving your organisation being handled only once it is in the press.",
+        "steps": ["Read the report and establish whether your organisation is the deployer, the developer or a bystander.",
+                  "Involve legal and the AI governance owner, since these carry regulatory as well as reputational weight.",
+                  "Check whether the system named is still in use and under what controls."],
+        "controls": ["NIST CSF 2.0 GV.RM-01"],
     },
     # --- third parties -----------------------------------------------------------------------------
     "TP-VENDOR-INC": {

@@ -14,6 +14,9 @@ STATUSPAGE = [  # vendor, Statuspage v2 base
     ("Snowflake", "https://status.snowflake.com"), ("Dropbox", "https://status.dropbox.com"),
     ("Box", "https://status.box.com"), ("Akamai", "https://www.akamaistatus.com"),
     ("DigitalOcean", "https://status.digitalocean.com"), ("HubSpot", "https://status.hubspot.com"),
+    # generative-AI providers. The vendor strings must match fingerprints.py exactly so they join
+    # with the DNS evidence in dependency.vendor: "OpenAI" and "Anthropic", never "Claude".
+    ("OpenAI", "https://status.openai.com"), ("Anthropic", "https://status.claude.com"),
 ]
 RSS = [("AWS", "https://status.aws.amazon.com/rss/all.rss"), ("Zscaler", "https://trust.zscaler.com/rss-feed")]
 IMPACT = {"critical": "high", "major": "medium", "minor": "low", "none": "low", "maintenance": "low"}

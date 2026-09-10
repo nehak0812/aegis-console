@@ -6,7 +6,7 @@ import { TrendingUp, Repeat, Sparkles } from 'lucide-react'
 import { useApi, qs } from '../lib/api'
 import { Gloss } from '../lib/glossary'
 import { useRange } from '../App'
-import { Card, Stat, Empty, SourceLink, When, Table, Tabs } from '../components/ui'
+import { Card, Stat, Empty, SourceLink, When, Table, Tabs, Seg } from '../components/ui'
 import { HBar } from '../components/charts'
 import { nivoTheme, SERIES, BLUE_RAMP, EMPTY, SURFACE, onFill } from '../lib/chartTheme'
 
@@ -17,7 +17,8 @@ export default function Analyst() {
   const theme = sp.get('theme') || ''
   const [ent, setEnt] = useState<'actors' | 'vendors' | 'cves'>('actors')
   const [cell, setCell] = useState<{ publisher: string; theme: string } | null>(null)
-  const { data } = useApi<any>(`/analyst?days=${range}`, 300)
+  const [family, setFamily] = useState('')
+  const { data } = useApi<any>(`/analyst?days=${range}${family ? `&family=${encodeURIComponent(family)}` : ''}`, 300)
   const { data: items } = useApi<any[]>(theme || cell ? `/items${qs({ theme: cell?.theme || theme, publisher: cell?.publisher, days: range, limit: 60 })}` : null, 300)
   const stats = useMemo(() => {
     const t = data?.themes || []
@@ -72,7 +73,8 @@ export default function Analyst() {
         </Card>
       </div>
 
-      <Card title="Who is publishing what" sub="publisher × theme — number of items · click a cell to read them" className="" >
+      <Card title="Who is publishing what" sub="publisher × theme — number of items · click a cell to read them" className=""
+        right={<Seg options={[{ id: '', label: 'All' }, ...(data.families || []).map((f: string) => ({ id: f, label: f }))]} value={family} onChange={setFamily} />}>
         <div style={{ height: Math.max(360, data.matrix.length * 24 + 130) }}>
           <ResponsiveHeatMap data={data.matrix} margin={{ top: 120, right: 20, bottom: 10, left: 220 }}
             axisTop={{ tickRotation: -40, tickSize: 0, tickPadding: 6 }} axisLeft={{ tickSize: 0, tickPadding: 8 }}
