@@ -8,7 +8,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from aegis.guard import PassiveGuardError, check_url, clean, has_credentials, redact  # noqa: E402
 from aegis.intel import fingerprints as fp  # noqa: E402
-from aegis.intel.pipeline import extract_victim, product_match  # noqa: E402
+from aegis.intel import prevent  # noqa: E402
+from aegis.intel.pipeline import extract_victim, product_match, rule_cat  # noqa: E402
 from aegis.intel.themes import cves_for, themes_for  # noqa: E402
 from aegis.rating import RULES, rule, vuln_rule, worst  # noqa: E402
 
@@ -113,3 +114,116 @@ def test_themes_and_cves():
     th = themes_for(t)
     assert "Ransomware & extortion" in th and "Zero-day exploitation" in th and "Supply-chain compromise" in th
     assert cves_for(t) == ["CVE-2023-34362"]
+
+
+# --- preventive checks: domain lifecycle, routing, certificates, lookalikes -----------------------
+def test_rdap_summary_reads_the_wire_format_not_the_epp_codes():
+    # RDAP normalises EPP status to lower-case words; the camel-case form never appears on the wire.
+    js = {"status": ["client transfer prohibited", "server delete prohibited"],
+          "events": [{"eventAction": "registration", "eventDate": "1988-05-27T04:00:00Z"},
+                     {"eventAction": "expiration", "eventDate": "2027-05-26T04:00:00Z"}],
+          "entities": [{"roles": ["registrar"], "vcardArray": ["vcard", [["version", {}, "text", "4.0"],
+                                                                        ["fn", {}, "text", "CSC Corporate Domains, Inc."]]]}]}
+    s = prevent.rdap_summary(js)
+    assert s["locked"] is True
+    assert s["expires"].startswith("2027-05-26")
+    assert s["registrar"] == "CSC Corporate Domains, Inc."
+
+
+def test_rdap_summary_flags_a_domain_with_no_transfer_lock():
+    s = prevent.rdap_summary({"status": ["active"], "events": [{"eventAction": "expiration", "eventDate": "2027-01-01T00:00:00Z"}]})
+    assert s["locked"] is False
+
+
+@pytest.mark.parametrize("js", [None, {}, {"status": []}, "not a dict"])
+def test_rdap_summary_returns_none_when_unusable(js):
+    assert prevent.rdap_summary(js) is None
+
+
+@pytest.mark.parametrize("days,expected", [(-3, "DOM-EXPIRY-30"), (0, "DOM-EXPIRY-30"), (30, "DOM-EXPIRY-30"),
+                                           (31, "DOM-EXPIRY-90"), (90, "DOM-EXPIRY-90"), (91, None), (400, None), (None, None)])
+def test_domain_expiry_buckets_at_the_boundaries(days, expected):
+    assert prevent.expiry_rule(days) == expected
+
+
+@pytest.mark.parametrize("state,expected", [("invalid", "BGP-RPKI-INVALID"), ("unknown", "BGP-RPKI-NONE"),
+                                            ("valid", None), ("VALID", None), (None, None), ("", None)])
+def test_rpki_state_maps_to_a_rule(state, expected):
+    assert prevent.rpki_rule(state) == expected
+
+
+def test_caa_allowed_parses_an_issue_policy():
+    assert prevent.caa_allowed(['0 issue "letsencrypt.org"', '0 issuewild "digicert.com"']) == {"letsencrypt.org", "digicert.com"}
+    assert prevent.caa_allowed(['0 iodef "mailto:security@example.com"']) is None   # no issue clause
+    assert prevent.caa_allowed([]) is None
+    assert prevent.caa_allowed(['0 issue ";"']) == set()                            # issuance denied outright
+
+
+def test_caa_violation_only_fires_on_a_known_ca_outside_a_real_policy():
+    allowed = {"letsencrypt.org"}
+    assert prevent.caa_violation("C=US, O=DigiCert Inc, CN=DigiCert TLS RSA", allowed) is True
+    assert prevent.caa_violation("C=US, O=Let's Encrypt, CN=R11", allowed) is False
+    # no CAA record published -> HYG-CAA's business, never a violation
+    assert prevent.caa_violation("C=US, O=DigiCert Inc", None) is False
+    # an issuer this build does not recognise must stay quiet rather than guess
+    assert prevent.caa_violation("C=XX, O=Some Regional CA Ltd", allowed) is False
+
+
+def test_lookalikes_are_plausible_and_exclude_the_original():
+    out = prevent.lookalikes("example.com")
+    assert "example.com" not in out
+    assert len(out) == len(set(out))
+    assert "exmple.com" in out          # omission
+    assert "exapmle.com" in out         # transposition
+    assert "example.net" in out         # TLD swap
+    assert all("." in c for c in out)
+
+
+@pytest.mark.parametrize("domain", ["", "x", "nodot", "a.com", "."])
+def test_lookalikes_declines_domains_too_short_to_be_useful(domain):
+    assert prevent.lookalikes(domain) == []
+
+
+@pytest.mark.parametrize("mx,resolves,expected", [(True, True, "LOOK-MX"), (True, False, "LOOK-MX"),
+                                                  (False, True, "LOOK-LIVE"), (False, False, None)])
+def test_lookalike_rule_puts_mail_first(mx, resolves, expected):
+    assert prevent.lookalike_rule(mx, resolves) == expected
+
+
+def test_spf_lookup_excess_uses_the_rfc_limit():
+    assert prevent.SPF_LOOKUP_LIMIT == 10
+    assert prevent.spf_lookup_excess({"lookups": 11}) is True
+    assert prevent.spf_lookup_excess({"lookups": 10}) is False
+    assert prevent.spf_lookup_excess({"lookups": 0}) is False
+    assert prevent.spf_lookup_excess(None) is False
+
+
+def test_nameserver_concentration_needs_at_least_two_servers():
+    assert prevent.ns_single_provider(["a.ns.example.net", "b.ns.example.net"]) is True
+    assert prevent.ns_single_provider(["a.ns.example.net", "b.ns.other.org"]) is False
+    assert prevent.ns_single_provider(["only.ns.example.net"]) is False   # one NS is not "concentration"
+    assert prevent.ns_single_provider([]) is False
+
+
+def test_new_prevent_rules_are_registered_and_levelled():
+    expected = {"HYG-SPF-LOOKUPS": "medium", "HYG-DKIM-NONE": "medium", "HYG-TLSRPT": "low", "HYG-NS-SINGLE": "low",
+                "DOM-LOCK": "high", "DOM-EXPIRY-30": "critical", "DOM-EXPIRY-90": "medium",
+                "CRT-CAA-VIOLATION": "high", "CRT-EXPIRY-14": "medium",
+                "BGP-RPKI-INVALID": "high", "BGP-RPKI-NONE": "medium", "LOOK-MX": "high", "LOOK-LIVE": "medium"}
+    for rid, lvl in expected.items():
+        assert rid in RULES, rid
+        assert rule(rid)[0] == lvl, rid
+
+
+def test_new_rule_families_are_routed_to_a_category():
+    # rule_cat falls back to "footprint" silently, so assert the intended destination
+    assert rule_cat("DOM-LOCK") == "hygiene"
+    assert rule_cat("LOOK-MX") == "hygiene"
+    assert rule_cat("BGP-RPKI-INVALID") == "footprint"
+    assert rule_cat("CRT-EXPIRY-14") == "footprint"
+
+
+def test_rdap_hosts_are_not_trusted_until_iana_registers_them():
+    with pytest.raises(PassiveGuardError):
+        check_url("https://rdap.example-registry.invalid/domain/x.com")
+    assert check_url("https://data.iana.org/rdap/dns.json")

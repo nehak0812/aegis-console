@@ -38,6 +38,23 @@ RULES: dict[str, tuple[str, str, str]] = {
     "HYG-DNSSEC":   ("low",      "organisation", "Domain is not DNSSEC-signed."),
     "HYG-MTASTS":   ("low",      "organisation", "No MTA-STS policy (inbound mail TLS not enforced)."),
     "HYG-CAA":      ("low",      "organisation", "No CAA record (any certificate authority may issue for the domain)."),
+    "HYG-SPF-LOOKUPS": ("medium", "organisation", "SPF record needs more than the 10 DNS lookups RFC 7208 allows — receivers return permerror, so SPF silently stops protecting the domain."),
+    "HYG-DKIM-NONE": ("medium",  "organisation", "No DKIM key published on any common selector, so receivers cannot verify that mail was signed by this domain."),
+    "HYG-TLSRPT":   ("low",      "organisation", "No TLS-RPT record, so failed inbound mail encryption is never reported back — inventory only."),
+    "HYG-NS-SINGLE": ("low",     "organisation", "Every authoritative nameserver is with a single provider (no DNS redundancy) — inventory only."),
+    # --- domain lifecycle (RDAP) ---------------------------------------------------------------
+    "DOM-LOCK":     ("high",     "organisation", "The primary domain carries no registrar transfer lock (clientTransferProhibited), so an unauthorised transfer could move its email and web traffic (RDAP)."),
+    "DOM-EXPIRY-30": ("critical", "organisation", "The primary domain expires within 30 days; if it lapses, email and web stop and the name can be re-registered by anyone (RDAP)."),
+    "DOM-EXPIRY-90": ("medium",  "organisation", "The primary domain expires within 90 days (RDAP)."),
+    # --- certificates (Certificate Transparency) -----------------------------------------------
+    "CRT-CAA-VIOLATION": ("high", "organisation", "A certificate in the public transparency logs was issued by a certificate authority the domain's own CAA record does not authorise (possible mis-issuance or unsanctioned IT)."),
+    "CRT-EXPIRY-14": ("medium",  "organisation", "A certificate covering a live public hostname expires within 14 days (certificate transparency logs)."),
+    # --- routing integrity (RPKI) --------------------------------------------------------------
+    "BGP-RPKI-INVALID": ("high", "organisation", "An IP prefix registered to this organisation is announced by an origin its own ROA does not authorise (RPKI invalid — possible hijack or stale ROA)."),
+    "BGP-RPKI-NONE": ("medium",  "organisation", "An IP prefix registered to this organisation has no Route Origin Authorisation, so networks filtering on RPKI cannot tell a hijack from a legitimate announcement."),
+    # --- lookalike domains (passive DNS + certificate transparency) ----------------------------
+    "LOOK-MX":      ("high",     "organisation", "A lookalike of this organisation's domain is registered and accepts mail (MX record), the usual preparation for invoice fraud and credential phishing."),
+    "LOOK-LIVE":    ("medium",   "organisation", "A lookalike of this organisation's domain is registered and resolves to a live address (public DNS)."),
     "DISC-8K-90":   ("critical", "organisation", "Filed an SEC 8-K Item 1.05 (material cybersecurity incident) in the last 90 days."),
     "DISC-8K-OLD":  ("high",     "organisation", "Filed an SEC 8-K Item 1.05 (material cybersecurity incident) more than 90 days ago."),
     "INC-NAMED-30": ("high",     "organisation", "Named as the victim in cyber-incident reporting by two or more independent publishers in the last 30 days."),

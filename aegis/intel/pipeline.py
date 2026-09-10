@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from aegis import db
 from aegis.intel.entities import matcher, norm, reg_domain
+from aegis.intel import prevent
 from aegis.rating import RANK, RISKY_PORTS, rule, worst
 
 UTC = timezone.utc
@@ -510,7 +511,8 @@ CATEGORIES = [
 RULE_CAT = {"DW-LEAK": "darkweb", "DW-ACCESS": "darkweb", "DW-FORUM": "darkweb", "DW-STEALER": "darkweb", "BR-": "darkweb",
             "DW-DDOS": "chatter", "THR-": "chatter", "INC-": "disclosure", "DISC-": "disclosure", "CMP-": "compromise",
             "VUL-": "vulns", "SURF-RISKY": "exposure", "SURF-TAKEOVER": "exposure", "SURF-EDGE": "critical", "SURF-LARGE": "footprint",
-            "HYG-": "hygiene", "TP-": "software", "AI-": "ai"}
+            "HYG-": "hygiene", "TP-": "software", "AI-": "ai",
+            "DOM-": "hygiene", "LOOK-": "hygiene", "BGP-": "footprint", "CRT-": "footprint"}
 CRITICAL_CLASSES = [  # passive "critical asset" classes from hostname + fingerprint
     ("Identity & SSO", re.compile(r"^(sso|login|auth|id|idp|adfs|sts|okta|ping|saml|oauth|identity)[\d-]*\.", re.I)),
     ("Remote access & VPN", re.compile(r"^(vpn|sslvpn|remote|ra|citrix|gateway|gw|webvpn|connect|access|rdweb|globalprotect|anyconnect|pulse)[\d-]*\.", re.I)),
@@ -614,6 +616,23 @@ def build_findings() -> int:
             risky = [f"{p}/{RISKY_PORTS[p]}" for p in at.get("ports") or [] if p in RISKY_PORTS]
             if risky:
                 F(oid, "SURF-RISKY-PORT", f"{a['value']} exposes {', '.join(risky)}", f"Hostnames: {', '.join(at.get('hosts') or [])}.", url, "surface", a["last_seen"], a["value"], {"ports": at.get("ports")})
+        elif a["kind"] == "prefix" and at.get("rpki"):
+            rid = prevent.rpki_rule(at["rpki"])
+            if rid:
+                asn = at.get("rpki_asn")
+                F(oid, rid, f"{a['value']} is RPKI {at['rpki']}",
+                  f"Announced by AS{asn}; {'no ROA authorises this origin' if at['rpki'] == 'invalid' else 'no Route Origin Authorisation covers this prefix'}.",
+                  f"https://stat.ripe.net/data/rpki-validation/data.json?resource=AS{asn}&prefix={a['value']}",
+                  "surface", a["last_seen"], a["value"], {"state": at["rpki"], "asn": asn})
+        elif a["kind"] == "lookalike":
+            rid = at.get("rule")
+            if rid:
+                mx, ips = at.get("mx") or [], at.get("ips") or []
+                how = f"Accepts mail via {', '.join(mx[:2])}." if mx else f"Resolves to {', '.join(ips[:2])}."
+                F(oid, rid, f"Lookalike domain {a['value']} is live",
+                  f"{how} Registered lookalikes are the usual preparation for phishing and invoice fraud.",
+                  f"https://dns.google/resolve?name={a['value']}&type={'MX' if mx else 'A'}",
+                  "surface", a["last_seen"], a["value"], {"ips": ips, "mx": mx})
         elif a["kind"] == "hostname" and at.get("dangling"):
             F(oid, "SURF-TAKEOVER", f"{a['value']} → {at.get('cname')} does not resolve", "Takeover-prone CNAME target returns no address.",
               f"https://crt.sh/?q={a['value']}", "surface", a["last_seen"], a["value"])
@@ -634,6 +653,47 @@ def build_findings() -> int:
                 F(oid, "HYG-MTASTS", f"No MTA-STS policy on {d}", "", f"https://dns.google/resolve?name=_mta-sts.{d}&type=TXT", "surface", a["last_seen"], d)
             if not h.get("caa"):
                 F(oid, "HYG-CAA", f"No CAA record on {d}", "", f"https://dns.google/resolve?name={d}&type=CAA", "surface", a["last_seen"], d)
+            if prevent.spf_lookup_excess(spf):
+                F(oid, "HYG-SPF-LOOKUPS", f"SPF on {d} needs {spf['lookups']} DNS lookups (limit is {prevent.SPF_LOOKUP_LIMIT})",
+                  "Receivers stop evaluating past the limit and return permerror, so this SPF record no longer protects the domain.",
+                  f"https://dns.google/resolve?name={d}&type=TXT", "surface", a["last_seen"], d, {"lookups": spf.get("lookups")})
+            if not h.get("dkim_selectors"):
+                F(oid, "HYG-DKIM-NONE", f"No DKIM key found on {d}", "None of the common selectors published a key.",
+                  f"https://dns.google/resolve?name=selector1._domainkey.{d}&type=TXT", "surface", a["last_seen"], d)
+            if not h.get("tls_rpt"):
+                F(oid, "HYG-TLSRPT", f"No TLS-RPT record on {d}", "Failed inbound mail encryption is never reported back.",
+                  f"https://dns.google/resolve?name=_smtp._tls.{d}&type=TXT", "surface", a["last_seen"], d)
+            if prevent.ns_single_provider(h.get("ns")):
+                F(oid, "HYG-NS-SINGLE", f"All {len(h['ns'])} nameservers for {d} are with one provider", ", ".join(h["ns"][:4]) + ".",
+                  f"https://dns.google/resolve?name={d}&type=NS", "surface", a["last_seen"], d, {"ns": h.get("ns")})
+
+            # --- domain lifecycle (RDAP)
+            rd = at.get("rdap") or {}
+            rdap_url = f"https://rdap.org/domain/{d}"
+            if rd:
+                if not rd.get("locked"):
+                    F(oid, "DOM-LOCK", f"{d} has no registrar transfer lock",
+                      f"Registrar: {rd.get('registrar') or 'unknown'}. Status: {', '.join(rd.get('statuses') or ['none published'])}.",
+                      rdap_url, "surface", a["last_seen"], d, {"statuses": rd.get("statuses")})
+                left = prevent.days_until(rd.get("expires"))
+                rid = prevent.expiry_rule(left)
+                if rid:
+                    F(oid, rid, f"{d} expires in {left} days" if left >= 0 else f"{d} expired {abs(left)} days ago",
+                      f"Registration ends {(rd.get('expires') or '')[:10]}. Registrar: {rd.get('registrar') or 'unknown'}.",
+                      rdap_url, "surface", a["last_seen"], d, {"expires": rd.get("expires"), "days": left})
+
+            # --- certificates
+            cert = at.get("certs") or {}
+            soon = cert.get("soonest")
+            if soon and soon.get("days") is not None and soon["days"] <= 14:
+                F(oid, "CRT-EXPIRY-14", f"Certificate for {soon['host']} expires in {soon['days']} days",
+                  f"Issued by {soon.get('issuer') or 'unknown'}, expires {(soon.get('not_after') or '')[:10]}.",
+                  f"https://crt.sh/?q={soon['host']}", "surface", a["last_seen"], soon["host"], {"days": soon["days"]})
+            for off in cert.get("caa_offenders") or []:
+                F(oid, "CRT-CAA-VIOLATION", f"Certificate for {off.get('cn') or d} issued outside the CAA policy",
+                  f"Issuer: {off.get('issuer')}. CAA authorises only {', '.join(cert.get('caa_allowed') or [])}.",
+                  f"https://crt.sh/?q={off.get('cn') or d}", "surface", a["last_seen"], off.get("serial") or off.get("cn") or d,
+                  {"issuer": off.get("issuer"), "allowed": cert.get("caa_allowed")})
             seen_v = set()
             for e in at.get("edge") or []:
                 v = (e.get("vendor") or "")

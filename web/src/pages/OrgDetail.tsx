@@ -15,14 +15,15 @@ const CAT_TAB: Record<string, Tab> = { footprint: 'assets', critical: 'assets', 
   compromise: 'compromise', darkweb: 'events', chatter: 'events', hygiene: 'hygiene', disclosure: 'events', ai: 'events' }
 const LT: Record<string, string> = { DIRECT: 'Named victim', GROUP: 'Corporate group', DEPENDENCY: 'Provider dependency', EXPOSED_PRODUCT: 'Exposed product', TARGETING: 'Sector targeting' }
 
-function Check({ ok, warn, label, detail, url }: { ok: boolean; warn?: boolean; label: string; detail?: string; url?: string }) {
+function Check({ ok, warn, label, detail, url, state, linkLabel }:
+  { ok: boolean; warn?: boolean; label: string; detail?: string; url?: string; state?: string; linkLabel?: string }) {
   const Icon = ok ? CheckCircle2 : warn ? MinusCircle : XCircle
   const color = ok ? 'var(--good)' : warn ? 'var(--medium)' : 'var(--high)'
   return (
     <div className="feed-item" style={{ gridTemplateColumns: 'auto 1fr auto' }}>
       <Icon size={16} color={color} />
-      <div><div className="t">{gloss(label)} <span className="muted" style={{ fontWeight: 400 }}>· {ok ? 'present' : warn ? 'partial' : 'missing'}</span></div>{detail && <div className="m mono" style={{ wordBreak: 'break-all' }}>{detail}</div>}</div>
-      {url ? <SourceLink url={url} label="DNS record" /> : <span />}
+      <div><div className="t">{gloss(label)} <span className="muted" style={{ fontWeight: 400 }}>· {state || (ok ? 'present' : warn ? 'partial' : 'missing')}</span></div>{detail && <div className="m mono" style={{ wordBreak: 'break-all' }}>{detail}</div>}</div>
+      {url ? <SourceLink url={url} label={linkLabel || 'DNS record'} /> : <span />}
     </div>
   )
 }
@@ -67,6 +68,10 @@ export default function OrgDetail() {
   const packing = { id: 'deps', children: Object.entries(data.dependencies).map(([c, vs]: any, i) => ({ id: c, color: SERIES[i % SERIES.length], children: vs.map((v: any) => ({ id: `${v.vendor}`, value: v.evidence.length + 1, cat: c, color: SERIES[i % SERIES.length] })) })) }
   const hy = fp.domain?.attrs?.hygiene || {}
   const d = fp.domain?.value || o.domain
+  const rdap = fp.domain?.attrs?.rdap || null
+  const rdapUrl = d ? `https://rdap.org/domain/${d}` : undefined
+  const expiryDays = rdap?.expires ? Math.floor((Date.parse(rdap.expires) - Date.now()) / 86400000) : null
+  const lookalikes: any[] = fp.lookalikes || []
   const dohUrl = (n: string, t: string) => `https://dns.google/resolve?name=${n}&type=${t}`
   const stealer = data.leaks.find((l: any) => l.kind === 'stealer')
 
@@ -185,7 +190,12 @@ export default function OrgDetail() {
           </Card>
           <div className="grid g2">
             <Card title="Owned & declared IP space" sub="used to attribute compromised-IP listings">
-              <Table rows={fp.prefixes} max={80} empty="No owned ranges identified." cols={[{ key: 'cidr', label: 'Range', render: (r: any) => <span className="mono">{r.cidr}</span> }, { key: 'provenance', label: 'Why it is attributed' }]} />
+              <Table rows={fp.prefixes} max={80} empty="No owned ranges identified." cols={[
+                { key: 'cidr', label: 'Range', render: (r: any) => <span className="mono">{r.cidr}</span> },
+                { key: 'rpki', label: 'RPKI', width: 130, render: (r: any) => !r.rpki ? <span className="muted" title="Only prefixes announced by an ASN registered to this organisation are validated">—</span>
+                  : r.rpki === 'valid' ? <span className="pill">valid</span>
+                    : <Sev level={r.rpki === 'invalid' ? 'high' : 'medium'} rule={r.rpki === 'invalid' ? 'BGP-RPKI-INVALID' : 'BGP-RPKI-NONE'} /> },
+                { key: 'provenance', label: 'Why it is attributed' }]} />
             </Card>
             <Card title="Corporate group (GLEIF Level 2)" sub={fp.parent ? `Ultimate parent: ${fp.parent.name}` : 'direct subsidiaries'}>
               <Table rows={fp.subsidiaries} max={80} empty="No subsidiary records (or not yet collected)." cols={[
@@ -310,7 +320,30 @@ export default function OrgDetail() {
                 <Check ok label="Name servers" detail={(hy.ns || []).join(', ')} url={dohUrl(d, 'NS')} />
               </div>)}
           </Card>
-          <Card title="Hygiene findings"><FindingList rows={catFindings(['hygiene'])} empty="All checked controls present." /></Card>
+          <div className="stack" style={{ gap: 14 }}>
+            <Card title="Domain lifecycle" sub="registry record via RDAP — the registrar lock and expiry date">
+              {!rdap ? <Empty>{fp.domain ? 'No registry record retrieved for this domain.' : 'Awaiting scan.'}</Empty> : (
+                <div className="feed">
+                  <Check ok={!!rdap.locked} label="Registrar transfer lock" state={rdap.locked ? 'locked' : 'not locked'}
+                    detail={(rdap.statuses || []).join(' · ') || 'no status published'} url={rdapUrl} linkLabel="RDAP record" />
+                  <Check ok={expiryDays === null || expiryDays > 90} warn={expiryDays !== null && expiryDays > 30 && expiryDays <= 90}
+                    label="Registration expiry"
+                    state={expiryDays === null ? 'unknown' : expiryDays < 0 ? `expired ${Math.abs(expiryDays)} days ago` : `${expiryDays} days left`}
+                    detail={rdap.expires ? `Expires ${String(rdap.expires).slice(0, 10)}` : undefined} url={rdapUrl} linkLabel="RDAP record" />
+                  <Check ok label="Registrar" state={rdap.registrar ? 'on record' : 'unknown'} detail={rdap.registrar || undefined} url={rdapUrl} linkLabel="RDAP record" />
+                </div>)}
+            </Card>
+            {lookalikes.length > 0 && (
+              <Card title="Lookalike domains" sub="confusable variants generated locally, then resolved through public DNS" className="flush">
+                <Table rows={lookalikes} max={25} cols={[
+                  { key: 'domain', label: 'Domain', render: (l: any) => <span className="mono">{l.domain}</span> },
+                  { key: 'mx', label: 'Accepts mail', render: (l: any) => (l.mx || []).length ? <span className="pill">MX</span> : <span className="muted">—</span> },
+                  { key: 'ips', label: 'Resolves to', render: (l: any) => <span className="muted mono">{(l.ips || []).join(', ') || '—'}</span> },
+                ]} />
+              </Card>
+            )}
+            <Card title="Hygiene findings"><FindingList rows={catFindings(['hygiene'])} empty="All checked controls present." /></Card>
+          </div>
         </div>
       )}
 
