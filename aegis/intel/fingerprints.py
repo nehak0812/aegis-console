@@ -89,6 +89,7 @@ CNAME = [
     (r"\.ssl\.sectigo|\.digicert", "DigiCert", "PKI & certificates"), (r"\.sfmc-content\.com|\.exacttarget\.com", "Salesforce", "CRM & marketing"),
     (r"\.onelogin\.com", "OneLogin", "Identity & access"), (r"\.pingone\.(com|eu)|\.pingidentity\.com", "Ping Identity", "Identity & access"),
     (r"\.zscaler\.(net|com)", "Zscaler", "Security"), (r"\.successfactors\.(com|eu)", "SAP SuccessFactors", "Business SaaS"),
+    (r"\.openai\.azure\.com\.?$", "Azure OpenAI", "AI services"),
 ]
 TAKEOVER_PRONE = re.compile(r"\.s3[.-]|\.azurewebsites\.net|\.cloudapp\.|\.trafficmanager\.net|\.github\.io|\.herokuapp\.com|\.blob\.core\.windows\.net|\.pages\.dev|\.netlify\.", re.I)
 
@@ -96,9 +97,9 @@ TAKEOVER_PRONE = re.compile(r"\.s3[.-]|\.azurewebsites\.net|\.cloudapp\.|\.traff
 EDGE = [
     (r"fortigate|fortinet|fortivpn|\bfgt\b|forti", "Fortinet", "FortiGate / FortiOS SSL-VPN"),
     (r"globalprotect|\bgp-|panorama|paloalto", "Palo Alto Networks", "PAN-OS GlobalProtect"),
-    (r"pulse|ivanti|connect-secure", "Ivanti", "Connect Secure"),   # \bics\b removed: industrial control systems
-    (r"mobileiron|\bepmm\b", "Ivanti", "Endpoint Manager Mobile"),   # \bmdm\b removed: any vendor's MDM
-    (r"citrix|netscaler|\bctx|storefront|citrix-?receiver", "Citrix", "NetScaler ADC / Gateway"),
+    (r"pulse|ivanti|connect-secure|\bics\b", "Ivanti", "Connect Secure"),
+    (r"mobileiron|\bepmm\b|\bmdm\b", "Ivanti", "Endpoint Manager Mobile"),
+    (r"citrix|netscaler|\bctx|storefront|citrix-?receiver", "Citrix", "NetScaler ADC / Gateway"),  # bare "receiver" matched github-receiver
     (r"anyconnect|\basa\b|ciscovpn", "Cisco", "ASA / Secure Client"),
     (r"sonicwall|\bsma\b|\bsra\b", "SonicWall", "SMA / SonicOS"),
     (r"bigip|big-ip|\bf5\b|\btmui\b", "F5", "BIG-IP"),
@@ -108,22 +109,20 @@ EDGE = [
     (r"\bjira\b", "Atlassian", "Jira Server / Data Center"), (r"confluence", "Atlassian", "Confluence Server / Data Center"),
     (r"bitbucket", "Atlassian", "Bitbucket Server"),
     (r"\bowa\b|exchange|autodiscover", "Microsoft", "Exchange Server"), (r"\badfs\b|\bsts\b", "Microsoft", "AD FS"),
-    (r"rdweb|rdgateway|remotedesktop", "Microsoft", "Remote Desktop Gateway"),   # \brds\b removed: also AWS RDS (r"sharepoint", "Microsoft", "SharePoint Server"),
+    (r"rdweb|rdgateway|\brds\b|remotedesktop", "Microsoft", "Remote Desktop Gateway"), (r"sharepoint", "Microsoft", "SharePoint Server"),
     (r"moveit", "Progress", "MOVEit Transfer"), (r"goanywhere", "Fortra", "GoAnywhere MFT"), (r"crushftp", "CrushFTP", "CrushFTP"),
     (r"\bcleo\b|vltrader|lexicom", "Cleo", "Harmony / VLTrader"), (r"ws_?ftp|whatsup", "Progress", "WS_FTP / WhatsUp Gold"),
-    (r"netweaver|\bfiori\b", "SAP", "NetWeaver"), (r"weblogic|oracleapps", "Oracle", "E-Business Suite / WebLogic"),   # \bebs\b removed: also AWS EBS
+    (r"netweaver|\bfiori\b", "SAP", "NetWeaver"), (r"weblogic|\bebs\b|oracleapps", "Oracle", "E-Business Suite / WebLogic"),
     (r"screenconnect|connectwise", "ConnectWise", "ScreenConnect"), (r"beyondtrust|bomgar", "BeyondTrust", "Remote Support / PRA"),
     (r"simplehelp", "SimpleHelp", "SimpleHelp"), (r"veeam", "Veeam", "Backup & Replication"),
     (r"zimbra", "Synacor", "Zimbra Collaboration"), (r"roundcube", "Roundcube", "Webmail"),
     (r"manageengine|servicedesk|desktopcentral", "Zoho", "ManageEngine"), (r"solarwinds|orion|serv-?u", "SolarWinds", "Orion / Serv-U"),
     (r"kaseya", "Kaseya", "VSA"), (r"barracuda", "Barracuda Networks", "Email Security Gateway"),
-    (r"sophos", "Sophos", "Firewall"),   # \butm\b removed: unified threat management is generic (r"watchguard|firebox", "WatchGuard", "Firebox"),
+    (r"sophos|\butm\b", "Sophos", "Firewall"), (r"watchguard|firebox", "WatchGuard", "Firebox"),
     (r"gitlab", "GitLab", "GitLab CE/EE"), (r"jenkins", "Jenkins", "Jenkins"), (r"sitecore", "Sitecore", "Experience Platform"),
     (r"commvault", "Commvault", "Command Center"), (r"\bprtg\b", "Paessler", "PRTG"),
-    # AI platforms that carry CISA KEV entries. Vendor and product match the vuln table exactly
-    # so recent_kev_for() can join. Ollama and Open WebUI are deliberately absent: AI-HOST
-    # covers them as inventory, and listing them in both places would double-count.
-    (r"langflow", "Langflow", "Langflow"), (r"litellm", "BerriAI", "LiteLLM"),
+    (r"langflow", "Langflow", "Langflow"), (r"litellm", "BerriAI", "LiteLLM"),  # AI stack with CISA KEV entries (vendorProject strings)
+    (r"n-?central|\bncentral\b", "N-able", "N-central"), (r"artifactory|\bjfrog\b", "JFrog", "Artifactory"),  # MSP / DevOps with KEV entries
     (r"\bvpn\b|sslvpn|remote|webvpn", None, "VPN / remote-access gateway (vendor unknown)"),
 ]
 DKIM_SELECTORS = ["selector1", "selector2", "google", "k1", "s1", "s2", "default", "dkim", "mail", "mandrill", "pp1", "mimecast20190124", "sm", "m1"]
@@ -147,40 +146,3 @@ def edge_product(hostname: str):
         if rx.search(labels):
             return vendor, prod
     return None
-
-
-# ---------------------------------------------------------------- self-hosted AI / ML services
-# Ports whose service is distinctive enough that the port alone identifies the product.
-AI_PORTS = {11434: "Ollama", 8265: "Ray dashboard", 7860: "Gradio", 6333: "Qdrant", 19530: "Milvus"}
-# Ports far too common to attribute on their own — these need product evidence (a CPE or a
-# hostname keyword) before anything is claimed. 8888 and 5000 run half the internet's dev servers.
-AI_PORTS_AMBIGUOUS = {8888: "Jupyter", 5000: "MLflow"}
-AI_HOST_RX = re.compile(r"ollama|jupyter|mlflow|langflow|litellm|open-?webui|comfyui|kubeflow", re.I)
-AI_CNAME_RX = re.compile(r"\.openai\.azure\.com\.?$", re.I)
-
-
-def ai_services(ports, cpes=None, hosts=None):
-    """Self-hosted AI/ML services on an internet-facing host.
-
-    Returns (confirmed, unconfirmed): confirmed names the product from a distinctive port, or
-    from an ambiguous port backed by product evidence. Unconfirmed is an ambiguous port with
-    nothing to corroborate it, which is reported at a lower level and says so.
-    """
-    text = " ".join(list(cpes or []) + list(hosts or [])).lower()
-    confirmed, unconfirmed = [], []
-    for p in ports or []:
-        if p in AI_PORTS:
-            confirmed.append(f"{AI_PORTS[p]} ({p})")
-        elif p in AI_PORTS_AMBIGUOUS:
-            name = AI_PORTS_AMBIGUOUS[p]
-            (confirmed if name.lower() in text else unconfirmed).append(f"{name} ({p})")
-    return confirmed, unconfirmed
-
-
-def ai_host(hostname: str, cname: str | None = None) -> str | None:
-    """An AI platform named by the hostname itself, or by a managed-service CNAME target."""
-    if cname and AI_CNAME_RX.search(cname):
-        return "Azure OpenAI"
-    first = (hostname or "").split(".")[0]
-    m = AI_HOST_RX.search(first)
-    return m.group(0).lower() if m else None

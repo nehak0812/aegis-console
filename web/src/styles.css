@@ -109,6 +109,57 @@ button { font: inherit; color: inherit; }
 @media (max-width: 1280px) { .g4 { grid-template-columns: repeat(2, minmax(0,1fr)); } .g-main-side, .g-side-main { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .g2, .g3, .g4 { grid-template-columns: 1fr; } .span2, .span3 { grid-column: auto; } }
 
+/* ---- the risk chain: landing steps, breadcrumb and previous / next ---- */
+.step-n { flex: none; width: 26px; height: 26px; border-radius: 999px; display: inline-grid; place-items: center; background: var(--accent-wash); color: var(--accent); font-weight: 700; font-size: 12.5px; }
+.step-n.sm { width: 20px; height: 20px; font-size: 11px; }
+.chain-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 14px; }
+.chain-grid > .wide { grid-column: 1 / -1; }
+.chain-strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 2px 0 14px; }
+.chain-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px 4px 4px; border: 1px solid var(--hair); border-radius: 999px; background: var(--surface); font-size: 12.5px; cursor: pointer; color: var(--ink-2); }
+.chain-chip:hover { border-color: var(--accent); color: var(--ink); }
+.chain-chip b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.chain-arrow { color: var(--muted); }
+.chain-top { font-size: 12.5px; color: var(--ink-2); margin: -8px 0 12px; display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+.chain-top a { cursor: pointer; color: var(--accent); }
+.chain-bottom { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 26px; }
+.chain-bottom a { color: var(--ink); text-decoration: none; }
+.chain-bottom .next { text-align: right; }
+
+/* ---- glossary: abbreviations are underlined without changing the DOM (CSS Custom Highlight API); hover or tap explains them ---- */
+::highlight(aegis-gloss) { text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+
+/* ---- phones and narrow windows ---- */
+/* grid items default to min-width:auto, so one wide child (a table, a heatmap) would widen the whole page — let the columns shrink */
+.shell > *, .main, .page, .grid > *, .stack > * { min-width: 0; }
+.page { overflow-x: hidden; }
+.menu-btn { display: none; }
+.scrim { display: none; }
+@media (max-width: 900px) {
+  .rail { position: fixed; top: 0; bottom: 0; left: 0; width: 268px; z-index: 60; transform: translateX(-105%); transition: transform .2s ease; box-shadow: var(--shadow); }
+  .rail.open { transform: none; }
+  .scrim.open { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 55; }
+  .menu-btn { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--hair); background: var(--surface); color: var(--ink); flex: none; cursor: pointer; }
+  .topbar { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+  .topbar .search { order: 5; flex-basis: 100%; max-width: none; }
+  .hide-sm { display: none !important; }
+  .page { padding: 14px 12px 60px; }
+  .page-head h2 { font-size: 19px; }
+  .chain-grid, .chain-bottom { grid-template-columns: 1fr; }
+  .chain-arrow { display: none; }
+  .card { padding: 12px; }
+}
+@media (max-width: 700px) {
+  /* wide charts (heatmaps, flows, treemaps) keep a readable width and scroll sideways inside their card */
+  .card { overflow-x: auto; }
+  /* match the height property only (style starts with it, or follows a ";") — not line-height */
+  .card > div[style^="height"]:not(.recharts-responsive-container):not(.map-wrap),
+  .card > div[style*="; height"]:not(.recharts-responsive-container):not(.map-wrap) { min-width: 620px; }
+  .lanes { grid-template-columns: 1fr !important; }
+  .wl-row { grid-template-columns: 88px minmax(0, 1fr) 40px !important; }
+  .stat .value { font-size: 22px; }
+  .page-head p { font-size: 13px; }
+}
+
 .card { background: var(--surface); border: 1px solid var(--hair); border-radius: var(--radius); padding: 16px; min-width: 0; position: relative; }
 .card.flush { padding: 0; }
 .card-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
@@ -164,9 +215,6 @@ input.txt:focus, select.txt:focus { border-color: var(--accent); }
 .btn { background: var(--raised-2); border: 1px solid var(--hair-2); border-radius: 8px; padding: 6px 12px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn:disabled:hover { border-color: var(--hair-2); }
-.btn.primary:disabled:hover { border-color: var(--accent); }
 
 /* ---------- lists & tables ---------- */
 .feed { display: flex; flex-direction: column; }
@@ -194,18 +242,21 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 
 /* ---------- map ---------- */
 .map-wrap { position: relative; border-radius: var(--radius); overflow: hidden; background: radial-gradient(ellipse at 50% 40%, var(--map-glow) 0%, var(--surface) 70%); }
-.map-wrap svg { display: block; width: 100%; height: auto; }
+.map-wrap svg { display: block; width: 100%; height: auto; user-select: none; }
+.map-wrap svg.pannable { cursor: grab; }
+.map-wrap svg.dragging { cursor: grabbing; }
+.map-ctrl { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; }
+.map-ctrl button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; background: var(--raised-2); border: 1px solid var(--hair-2); border-radius: 6px; color: var(--ink); cursor: pointer; }
+.map-ctrl button:hover:not(:disabled) { border-color: var(--accent); }
+.map-ctrl button:disabled { opacity: .4; cursor: default; }
+.map-regions { position: absolute; top: 8px; left: 8px; right: 48px; display: flex; flex-wrap: wrap; gap: 4px; pointer-events: none; }
+.map-regions button { pointer-events: auto; font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: var(--raised-2); border: 1px solid var(--hair-2); color: var(--ink-2); cursor: pointer; }
+.map-regions button.on { color: var(--ink); border-color: var(--accent); }
+.map-hint { position: absolute; left: 10px; bottom: 6px; font-size: 11px; color: var(--muted); pointer-events: none; background: var(--raised-2); padding: 2px 6px; border-radius: 4px; opacity: .92; }
 .map-land { fill: var(--land); stroke: var(--land-stroke); stroke-width: .5; }
 .theme-seg button { display: inline-flex; align-items: center; gap: 5px; }
 @media (max-width: 1280px) { .theme-seg .lbl { display: none; } }
 .map-grat { fill: none; stroke: rgba(57,135,229,.06); stroke-width: .6; }
-.map-wrap.zoomable svg { cursor: grab; touch-action: none; }
-.map-wrap.zoomable.grabbing svg { cursor: grabbing; }
-.map-zoom { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 2; }
-.map-zoom .btn { padding: 6px; background: var(--surface); }
-.map-zoom .btn:disabled { opacity: .35; cursor: default; }
-.map-zoom .btn:disabled:hover { border-color: var(--hair-2); }
-.map-hint { position: absolute; left: 12px; bottom: 10px; font-size: 11px; color: var(--muted); pointer-events: none; }
 .ping { transform-box: fill-box; transform-origin: center; animation: ping 2.6s ease-out infinite; }
 @keyframes ping { 0% { opacity: .8; transform: scale(.4); } 80% { opacity: 0; transform: scale(3.2); } 100% { opacity: 0; transform: scale(3.2); } }
 .arc-flow { stroke-dasharray: 4 6; animation: flow 1.2s linear infinite; }
@@ -251,70 +302,3 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .multi-clear { width: 100%; margin-top: 6px; padding: 5px 8px; border-radius: 6px; background: none; border: 0;
   color: var(--muted); cursor: pointer; font: inherit; text-align: left; }
 .multi-clear:hover { background: var(--raised-2); color: var(--ink); }
-
-/* ---------- glossary ---------- */
-/* abbreviations the console uses in its own voice: hover shows the full form */
-abbr.gloss { text-decoration: underline dotted var(--hair-2); text-underline-offset: 3px; cursor: help; }
-abbr.gloss:hover { text-decoration-color: var(--accent); color: var(--ink); }
-.tbl th abbr.gloss { text-decoration-color: var(--hair-2); }
-
-/* ---------- small screens ---------- */
-/* The nav rail is a permanent column on desktop and an off-canvas drawer below 900px.
-   It is never display:none — hiding it removed every navigation link on a phone. */
-.nav-toggle { display: none; background: var(--surface); border: 1px solid var(--hair); border-radius: 8px;
-  color: var(--ink); cursor: pointer; padding: 8px; align-items: center; justify-content: center; flex: none; }
-.nav-toggle:hover { border-color: var(--accent); }
-.nav-backdrop { display: none; }
-
-@media (max-width: 900px) {
-  .nav-toggle { display: inline-flex; }
-  .shell { grid-template-columns: 1fr; }
-  .rail { position: fixed; top: 0; bottom: 0; left: 0; right: auto; width: min(84vw, 300px); max-width: 300px;
-    z-index: 60; transition: transform .22s ease; box-shadow: var(--shadow); transform: translateX(-100%); }
-  .shell.nav-open .rail { transform: none; }
-  .shell.nav-open .nav-backdrop { display: block; position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .5); }
-  /* larger hit areas: a 16px icon link is not a tap target */
-  .rail .nav a { padding: 11px 10px; }
-
-  .topbar { padding: 8px 12px; gap: 8px; }
-  .live { display: none; }                 /* collection status is on Sources & method */
-  .page { padding: 14px 12px 72px; }
-  .page-head { gap: 10px; margin-bottom: 14px; }
-  .page-head h2 { font-size: 19px; }
-  .card { padding: 13px; }
-
-  /* Inline grid-template-columns beat a class-based media query, so several pages kept
-     four-up stat rows on a phone. This is the one place !important is warranted. */
-  .grid[style] { grid-template-columns: 1fr !important; }
-  .grid { gap: 10px; }
-
-  /* comfortable touch targets */
-  .btn, .seg button, .tabs button, .pill.btn { min-height: 38px; }
-  .seg button { padding: 8px 12px; }
-  .multi-btn { min-height: 38px; }
-  .search input { padding: 10px 12px 10px 34px; }
-
-  /* the map must not trap a scrolling finger: vertical drags scroll the page,
-     horizontal drags still pan the map, and the +/- buttons still zoom */
-  .map-wrap.zoomable svg { touch-action: pan-y; }
-  .map-hint { display: none; }   /* "scroll to zoom" is mouse language */
-
-  /* wide content scrolls inside its own container rather than the page */
-  .tbl-wrap { -webkit-overflow-scrolling: touch; }
-  .tbl th, .tbl td { padding: 8px; }
-  .filters { gap: 6px; }
-  .multi { width: 100% !important; }
-  .search[style] { max-width: none !important; }
-}
-
-@media (max-width: 560px) {
-  .page-head h2 { font-size: 17px; }
-  .stat .value { font-size: 26px; }
-  .tabs button { padding: 9px 10px; font-size: 13px; }
-}
-
-/* confidence: neutral by design — colour stays reserved for severity */
-.pill.conf { font-size: 11px; letter-spacing: .01em; }
-.pill.conf.confirmed { border-color: var(--hair-2); color: var(--ink-2); }
-.pill.conf.likely { opacity: .85; }
-.pill.conf.unconfirmed { opacity: .7; font-style: italic; }

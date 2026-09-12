@@ -3,7 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { Search, ExternalLink } from 'lucide-react'
 import { useApi, qs } from '../lib/api'
-import { Gloss } from '../lib/glossary'
+import { StoryStrip, SectionLabel, PageSources } from '../components/ui'
+import { useRange } from '../App'
 import { Card, Empty, SourceLink, When, Seg, Table, Stat } from '../components/ui'
 import { HBar } from '../components/charts'
 import WorldMap from '../components/WorldMap'
@@ -34,7 +35,7 @@ function Detail({ id }: { id: string }) {
       </Card>
       <div className="grid g3">
         <Stat label="Leak-site victims (tracked)" value={data.victims.length} hint="all time in store" />
-        <Stat label="Reporting mentions" value={data.items.length} hint="last 120 days" />
+        <Stat label="Reporting mentions · all collected" value={data.items.length} hint="every collected item that names this actor" />
         <Stat label="Publishers reporting" value={Object.keys(data.publishers).length} hint="consensus across sources" />
       </div>
       {(cs.countries?.length || cs.industries?.length || data.sectors?.length || data.countries?.length) ? (
@@ -79,9 +80,10 @@ function Detail({ id }: { id: string }) {
 export default function Adversaries() {
   const { id } = useParams()
   const nav = useNavigate()
+  const { range } = useRange()
   const [kind, setKind] = useState('')
   const [q, setQ] = useState('')
-  const { data } = useApi<any>(`/actors${qs({ kind, q: q.length > 1 ? q : '' })}`, 300)
+  const { data } = useApi<any>(`/actors${qs({ kind, q: q.length > 1 ? q : '', days: range })}`, 300)
   const rows = data?.actors || []
   return (
     <div>
@@ -89,9 +91,23 @@ export default function Adversaries() {
         <div>
           <div className="eyebrow">Adversaries</div>
           <h2>Who is active, what they target, and who is reporting it</h2>
-          <p><Gloss>One alias index across naming schemes — CrowdStrike (BEAR, PANDA, KITTEN, CHOLLIMA, SPIDER, JACKAL…), Microsoft weather names, MITRE ATT&CK IDs and MISP — ranked by live activity: reporting mentions and leak-site victims.</Gloss></p>
+          <p>One alias index across naming schemes — CrowdStrike (BEAR, PANDA, KITTEN, CHOLLIMA, SPIDER, JACKAL…), Microsoft weather names, MITRE ATT&CK IDs and MISP — ranked by live activity: reporting mentions and leak-site victims.</p>
         </div>
       </div>
+      {data && (() => {
+        const active = rows.filter((r: any) => r.activity > 0)
+        const withVictims = rows.filter((r: any) => r.victims_30d > 0)
+        const victims = withVictims.reduce((a: number, r: any) => a + r.victims_30d, 0)
+        const top = [...rows].sort((a: any, b: any) => (b.activity || 0) - (a.activity || 0))[0]
+        return (
+          <StoryStrip items={[
+            { label: 'Tracked', value: data.total, title: 'actors in one alias index', sub: 'CrowdStrike, Microsoft, MITRE ATT&CK and MISP names resolved to one record' },
+            { label: `Active · ${range}d`, value: active.length, title: 'actors with reporting or victims', sub: 'mentioned in collected reporting or listing victims on a leak site' },
+            { label: `Extortion · ${range}d`, value: withVictims.length, title: 'groups listing victims', sub: `${victims} victims listed on leak sites in ${range} days` },
+            { label: 'Most active', value: top?.activity || 0, title: top?.name || '—', sub: 'mentions + leak-site victims · click for the profile', onClick: top ? () => nav(`/adversaries/${top.id}`) : undefined },
+          ]} />)
+      })()}
+      <SectionLabel>Every actor · select one for targets, victims, tools and techniques</SectionLabel>
       <div className="filters">
         <Seg options={[{ id: '', label: 'All' }, { id: 'ransomware', label: 'Ransomware' }, { id: 'apt', label: 'State-nexus' }, { id: 'ecrime', label: 'eCrime' }, { id: 'hacktivist', label: 'Hacktivist' }]} value={kind as any} onChange={setKind as any} />
         <div className="search" style={{ maxWidth: 280 }}><Search size={14} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="name, alias, CrowdStrike name…" /></div>
@@ -117,7 +133,7 @@ export default function Adversaries() {
         {id ? <Detail id={id} /> : (
           <div className="stack" style={{ gap: 14 }}>
             <div className="grid g2">
-              <Card title="Most active now" sub="reporting mentions + leak-site victims, 30 days">
+              <Card title="Most active" sub={`reporting mentions + leak-site victims · last ${range} days`}>
                 <HBar data={rows.filter((r: any) => r.activity > 0).slice(0, 14).map((r: any) => ({ name: r.name, n: r.activity, id: r.id }))} label="name" value="n" onClick={d => nav(`/adversaries/${d.id}`)} />
               </Card>
               <Card title="By attributed origin" sub="MISP country, or CrowdStrike / Microsoft naming convention">
@@ -127,6 +143,7 @@ export default function Adversaries() {
             <Card title="Select an actor" sub="to see targets, victims, tools, techniques and who is reporting on it"><Empty>Pick from the list, or search by any vendor's name for the group.</Empty></Card>
           </div>)}
       </div>
+      <PageSources cats={['Threat intel', 'Dark web']} />
     </div>
   )
 }
