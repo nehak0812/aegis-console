@@ -9,6 +9,7 @@ import feedparser
 
 from aegis import db, net
 from aegis.guard import redact
+from aegis.intel.atlas import atlas_for
 from aegis.intel.entities import matcher
 from aegis.intel.themes import cves_for, sectors_for, themes_for
 
@@ -56,7 +57,7 @@ def enrich(title: str, summary: str) -> dict:
     text = f"{title}. {summary}"
     return {
         "themes": themes_for(text),
-        "entities": {"cves": cves_for(text), "sectors": sectors_for(text)},
+        "entities": {"cves": cves_for(text), "sectors": sectors_for(text), "atlas": atlas_for(text)},
         "org_ids": matcher.mentions(title) or matcher.mentions(summary[:400]),
     }
 

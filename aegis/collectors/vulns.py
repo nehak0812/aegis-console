@@ -1,4 +1,6 @@
 """Exploited software: CISA KEV (full catalogue) + FIRST EPSS exploit probability → explainable vuln severity."""
+import json
+
 from aegis import db, net
 from aegis.rating import rule, vuln_rule
 from aegis.registry import Source, collector
@@ -21,6 +23,8 @@ def collect_kev() -> int:
             "name": v.get("vulnerabilityName"), "description": v.get("shortDescription"),
             "kev_added": v.get("dateAdded"), "kev_due": v.get("dueDate"),
             "ransomware": v.get("knownRansomwareCampaignUse"), "cwes": v.get("cwes") or [],
+            # what CISA tells agencies to do, and the vendor advisories it cites — evidence that a fix or mitigation exists
+            "kev_action": (v.get("requiredAction") or "")[:400] or None, "kev_notes": (v.get("notes") or "")[:800] or None,
             "updated": db.now(),
         })
     db.upsert("vuln", rows, keep=("epss", "epss_pct", "cvss", "exploit_refs", "published", "severity", "severity_rule"))
@@ -53,6 +57,46 @@ def collect_epss() -> int:
                                   "cwes", "cvss", "exploit_refs", "published", "severity", "severity_rule"))
     rate_all()
     return len(rows)
+
+
+EPSS_DAILY = "https://epss.empiricalsecurity.com/epss_scores-{}.csv.gz"
+
+
+@collector(Source(
+    id="epss_trend", name="FIRST EPSS history (7 and 30 days ago)", category="Vulnerabilities", publisher="FIRST.org (daily score files)",
+    homepage="https://www.first.org/epss/data_stats", url="https://epss.empiricalsecurity.com/", cadence_min=720,
+    licence="Free to use (FIRST EPSS terms)",
+    notes="Two daily files (all CVEs, ~2.6 MB each) give every tracked CVE's exploit likelihood a week and a month ago, so AEGIS can see "
+          "which vulnerabilities are surging towards exploitation before CISA confirms it (rule VUL-EPSS-SURGE)."))
+def collect_epss_trend() -> int:
+    import csv
+    import gzip
+    import io
+    from datetime import date, timedelta
+    have = {r["cve"] for r in db.q("SELECT cve FROM vuln")}
+    n = 0
+    for days, col in ((7, "epss_7d"), (30, "epss_30d")):
+        raw = None
+        for back in (0, 1, 2):  # the newest file can lag a day
+            try:
+                raw = net.cached(EPSS_DAILY.format((date.today() - timedelta(days=days + back)).isoformat()), 24 * 7, binary=True, timeout=120)
+                break
+            except Exception as e:
+                print("[epss_trend]", days, back, e)
+        if not raw:
+            continue
+        txt = (gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw).decode("utf-8", errors="replace")
+        rows = []
+        for r in csv.DictReader(io.StringIO("\n".join(l for l in txt.splitlines() if not l.startswith("#")))):
+            if r.get("cve") in have:
+                rows.append((float(r["epss"]), r["cve"]))
+        c = db.conn()
+        c.executemany(f"UPDATE vuln SET {col}=? WHERE cve=?", rows)
+        c.commit()
+        n += len(rows)
+    if not n:
+        raise RuntimeError("no EPSS history file could be read")
+    return n
 
 
 def ensure_cves(cves: set[str]) -> None:
@@ -188,4 +232,81 @@ def collect_cve_details() -> int:
                   (r["published"], r.get("cvss"), r.get("desc") or None, r.get("vendor"), r.get("product"), r["cve"]))
     c.commit()
     rate_all()
+    return len(res)
+
+
+# ------------------------------------------------------------------ vendor fixes: has the vendor published one?
+FIX_TAGS = {"patch", "vendor-advisory", "mitigation", "release-notes"}
+
+
+def fix_from_record(js: dict) -> dict:
+    """What a CVE record (cvelistV5, CNA + ADP containers) says about a fix: references tagged patch / vendor-advisory /
+    mitigation / release-notes, and fixed versions (an 'affected' range with 'lessThan' ends where the fix begins)."""
+    cont = js.get("containers") or {}
+    refs = list((cont.get("cna") or {}).get("references") or [])
+    for a in cont.get("adp") or []:
+        refs += a.get("references") or []
+    tagged, seen = [], set()
+    for r in refs:
+        tags = {str(t).lower() for t in (r.get("tags") or [])} & FIX_TAGS
+        if tags and r.get("url") and r["url"] not in seen:
+            seen.add(r["url"])
+            tagged.append({"url": r["url"], "tags": sorted(tags)})
+    fixed = set()
+    for a in (cont.get("cna") or {}).get("affected") or []:
+        for v in a.get("versions") or []:
+            if v.get("status") == "affected" and v.get("lessThan") and v["lessThan"] not in ("*", "unspecified"):
+                # an affected range; the fix is at its upper bound. 'version' is sometimes a release branch (Citrix: 14.1 before build 66.59)
+                base = str(v.get("version") or "")
+                branch = f" {base}" if base not in ("", "0", "*", "n/a", "unspecified") and not v["lessThan"].startswith(base) else ""
+                fixed.add(f"{a.get('product') or ''}{branch} before {v['lessThan']}".strip())
+    return {"patch": any("patch" in t["tags"] or "release-notes" in t["tags"] for t in tagged), "advisory": any("vendor-advisory" in t["tags"] for t in tagged),
+            "mitigation": any("mitigation" in t["tags"] for t in tagged), "fixed_versions": sorted(fixed)[:6], "urls": tagged[:6], "source": "CVE record"}
+
+
+def kev_note_urls(notes: str | None) -> list[str]:
+    """Vendor advisory links CISA cites in a KEV entry's notes (NVD links excluded — they are not the vendor)."""
+    import re
+    return [u.rstrip(".;,)") for u in re.findall(r"https?://[^\s;]+", notes or "") if "nvd.nist.gov" not in u][:4]
+
+
+@collector(Source(
+    id="cve_fixes", name="Vendor fix evidence (CVE records)", category="Vulnerabilities",
+    publisher="CVE Program — cvelistV5 (CNA and CISA ADP references)", homepage="https://github.com/CVEProject/cvelistV5",
+    url="https://raw.githubusercontent.com/CVEProject/cvelistV5/main/cves/deltaLog.json", cadence_min=180, licence="CVE terms of use (free)",
+    notes="For exploited CVEs and CVEs on monitored organisations' own hosts: whether the vendor published a patch, advisory or mitigation "
+          "(tagged references, fixed versions), with CISA KEV advisory notes as a fallback. Re-checked every 14 days until a patch appears."))
+def collect_cve_fixes() -> int:
+    from concurrent.futures import ThreadPoolExecutor
+    from aegis.intel.pipeline import ts
+    exposed = {c for a in db.q("SELECT attrs FROM asset WHERE kind='ip' AND attrs LIKE '%\"vulns\": [\"CVE%'") for c in (a.get("attrs") or {}).get("vulns") or []}
+    cands = db.q("SELECT cve, kev_added, kev_notes, fix, fix_checked FROM vuln WHERE kev_added IS NOT NULL OR cve IN (SELECT value FROM json_each(?))",
+                 (json.dumps(sorted(exposed)),))
+    stale = ts(14)
+
+    def due(r):
+        f = r.get("fix") or {}
+        nurls = set(kev_note_urls(r.get("kev_notes")))
+        notes_new = bool(nurls) and not (nurls & {u["url"] for u in f.get("urls") or []})  # KEV advisory notes arrived after the last check
+        return not r.get("fix_checked") or notes_new or (not f.get("patch") and (r.get("fix_checked") or "") < stale)
+    todo = sorted([r for r in cands if due(r)], key=lambda r: (r["cve"] not in exposed, r.get("fix_checked") is not None, -(len(r.get("kev_added") or ""))))[:300]
+
+    def one(r):
+        try:
+            js = net.get_json(_cve_path(r["cve"]), timeout=20, retries=1, ok_404=True)
+        except Exception:
+            return None
+        f = fix_from_record(js) if js else {"patch": False, "advisory": False, "mitigation": False, "fixed_versions": [], "urls": [], "source": "CVE record not found"}
+        # the vendor advisories CISA cites in KEV count as a published advisory, added to whatever the CVE record tags
+        notes = [u for u in kev_note_urls(r.get("kev_notes")) if u not in {x["url"] for x in f["urls"]}]
+        if notes:
+            f.update(advisory=True, urls=(f["urls"] + [{"url": u, "tags": ["cited by CISA KEV"]} for u in notes])[:8],
+                     source=f"{f['source']} + CISA KEV notes" if f["urls"] else "CISA KEV notes")
+        return r["cve"], f
+    with ThreadPoolExecutor(8) as ex:
+        res = [x for x in ex.map(one, todo) if x]
+    c = db.conn()
+    now = db.now()
+    c.executemany("UPDATE vuln SET fix=?, fix_checked=? WHERE cve=?", [(json.dumps(f), now, cve) for cve, f in res])
+    c.commit()
     return len(res)

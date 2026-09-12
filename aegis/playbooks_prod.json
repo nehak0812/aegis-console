@@ -1,0 +1,870 @@
+[
+ {
+  "owner": "Email & DNS administration",
+  "effort": "M",
+  "prevents": "Anyone sending mail that appears to come from your domain. This is the opening move in invoice fraud and credential phishing against your staff, customers and suppliers.",
+  "steps": [
+   "Publish a DMARC record at p=none with a rua address, and collect reports for two to four weeks.",
+   "Use the reports to find every legitimate sender — payroll, CRM, marketing, ticketing — and bring each under SPF or DKIM.",
+   "Move to p=quarantine, then to p=reject once the reports show no legitimate mail failing.",
+   "Set sp=reject so subdomains inherit the policy."
+  ],
+  "controls": [
+   "NIST SP 800-177 Rev. 1 §4.6",
+   "NIST CSF 2.0 PR.DS-02"
+  ],
+  "rule_id": "HYG-DMARC-NONE"
+ },
+ {
+  "owner": "Email & DNS administration",
+  "effort": "S",
+  "prevents": "Receiving mail servers having no way to tell your mail from a forgery.",
+  "steps": [
+   "List every system that sends mail as this domain.",
+   "Publish a v=spf1 record naming those senders and ending in -all.",
+   "Confirm each sender still delivers before enforcing."
+  ],
+  "controls": [
+   "NIST SP 800-177 Rev. 1 §4.4"
+  ],
+  "rule_id": "HYG-SPF-MISSING"
+ },
+ {
+  "owner": "Email & DNS administration",
+  "effort": "S",
+  "prevents": "Forged mail being delivered anyway. ~all tells receivers to accept mail that failed the check.",
+  "steps": [
+   "Review DMARC reports to confirm every legitimate sender is already listed.",
+   "Change the record to end in -all.",
+   "Watch reports for a week for senders you missed."
+  ],
+  "controls": [
+   "NIST SP 800-177 Rev. 1 §4.4"
+  ],
+  "rule_id": "HYG-SPF-SOFT"
+ },
+ {
+  "owner": "Email & DNS administration",
+  "effort": "M",
+  "prevents": "SPF failing silently. Past ten DNS lookups receivers return permerror and stop evaluating, so the record protects nothing while still looking correct.",
+  "steps": [
+   "Count the lookups: every include, a, mx, ptr, exists and redirect counts.",
+   "Remove includes for services you no longer send from — this is usually most of the excess.",
+   "Flatten or consolidate the remainder, or move senders onto a subdomain with its own record.",
+   "Re-test and confirm the record evaluates without permerror."
+  ],
+  "controls": [
+   "NIST SP 800-177 Rev. 1 §4.4",
+   "RFC 7208 §4.6.4"
+  ],
+  "rule_id": "HYG-SPF-LOOKUPS"
+ },
+ {
+  "owner": "Email & DNS administration",
+  "effort": "M",
+  "prevents": "Receivers being unable to prove your mail was not altered in transit, and DMARC having only SPF to rely on — which breaks whenever mail is forwarded.",
+  "steps": [
+   "Enable DKIM signing at each mail provider.",
+   "Publish the public key each provider gives you at its selector.",
+   "Confirm signatures verify, then require DKIM alignment in DMARC."
+  ],
+  "controls": [
+   "NIST SP 800-177 Rev. 1 §4.5"
+  ],
+  "rule_id": "HYG-DKIM-NONE"
+ },
+ {
+  "owner": "Email & DNS administration",
+  "effort": "M",
+  "prevents": "An attacker downgrading inbound mail to plain text and reading it in transit. Without a policy, TLS is opportunistic and silently skippable.",
+  "steps": [
+   "Publish the policy file at https://mta-sts.<domain>/.well-known/mta-sts.txt.",
+   "Publish the _mta-sts TXT record with a policy id.",
+   "Run in testing mode first, then move to enforce."
+  ],
+  "controls": [
+   "NIST SP 800-177 Rev. 1 §4.7",
+   "NIST CSF 2.0 PR.DS-02"
+  ],
+  "rule_id": "HYG-MTASTS"
+ },
+ {
+  "owner": "Email & DNS administration",
+  "effort": "S",
+  "prevents": "Failed inbound mail encryption going unnoticed. TLS-RPT is how you find out MTA-STS is misconfigured before someone else does.",
+  "steps": [
+   "Publish a _smtp._tls TXT record with a reporting address.",
+   "Route the reports to a monitored mailbox rather than an unread alias."
+  ],
+  "controls": [
+   "NIST SP 800-177 Rev. 1 §4.7"
+  ],
+  "rule_id": "HYG-TLSRPT"
+ },
+ {
+  "owner": "Email & DNS administration",
+  "effort": "L",
+  "prevents": "Forged DNS answers sending your customers and mail to an attacker's servers without touching your systems at all.",
+  "steps": [
+   "Confirm your DNS provider and registrar both support DNSSEC for this TLD.",
+   "Sign the zone and publish the DS record at the registrar.",
+   "Validate the chain resolves, and put key rollover on a schedule before you enable it.",
+   "Treat this as a change with rollback: a broken chain makes the domain unreachable."
+  ],
+  "controls": [
+   "NIST SP 800-81-2",
+   "NIST CSF 2.0 PR.DS-02"
+  ],
+  "rule_id": "HYG-DNSSEC"
+ },
+ {
+  "owner": "Email & DNS administration",
+  "effort": "S",
+  "prevents": "Any certificate authority in the world issuing a valid certificate for your domain. CAA restricts issuance to the ones you actually use.",
+  "steps": [
+   "List the certificate authorities your teams legitimately use, including those inside cloud services.",
+   "Publish CAA records naming only those, plus an iodef address for violation reports.",
+   "Re-check certificate transparency afterwards for issuance outside the policy."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.DS-02",
+   "RFC 8659"
+  ],
+  "rule_id": "HYG-CAA"
+ },
+ {
+  "owner": "Email & DNS administration",
+  "effort": "M",
+  "prevents": "One provider outage taking your web, mail and every other service offline at once. DNS is the single dependency nothing else works without.",
+  "steps": [
+   "Decide whether single-provider DNS is an accepted risk for this domain — for many organisations it is.",
+   "If not, add a second provider and keep the zones synchronised.",
+   "Test failover before you need it."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.AM-04"
+  ],
+  "rule_id": "HYG-NS-SINGLE"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "S",
+  "prevents": "An unauthorised transfer moving the domain — and with it all your email and web traffic — to someone else. This is one of the cheapest controls available and it is usually just switched off.",
+  "steps": [
+   "Ask the registrar to apply clientTransferProhibited, clientUpdateProhibited and clientDeleteProhibited.",
+   "For a domain the business genuinely depends on, ask about registry lock, which requires manual verification for any change.",
+   "Turn on multi-factor authentication for the registrar account and confirm who has access.",
+   "Set the registrar contact to a monitored mailbox, not an individual's."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.AM-01"
+  ],
+  "rule_id": "DOM-LOCK"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "S",
+  "prevents": "The domain lapsing. Email and web stop, and once it drops the name can be registered by anyone — including someone who wants your mail.",
+  "steps": [
+   "Renew now, and renew for several years rather than one.",
+   "Enable auto-renew and confirm the payment card on file has not expired.",
+   "Put the expiry date in a calendar owned by a team, not a person."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.AM-01"
+  ],
+  "rule_id": "DOM-EXPIRY-30"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "S",
+  "prevents": "A renewal being missed while nobody is watching the date.",
+  "steps": [
+   "Confirm auto-renew is on and the payment method is valid.",
+   "Extend the registration term so this recurs less often."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.AM-01"
+  ],
+  "rule_id": "DOM-EXPIRY-90"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "S",
+  "prevents": "A certificate expiring in production — a full outage on a live hostname, and one of the most common self-inflicted incidents there is.",
+  "steps": [
+   "Renew and deploy the certificate.",
+   "Automate renewal for this hostname so it does not recur.",
+   "Alert on certificates within 30 days of expiry, not 7."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.DS-02"
+  ],
+  "rule_id": "CRT-EXPIRY-14"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "A certificate you did not sanction being trusted for your domain. Either a team is buying certificates outside the agreed process, or someone else obtained one.",
+  "steps": [
+   "Identify who requested the certificate — check the hostname against your own inventory first.",
+   "If it is a team of yours, bring them onto an approved certificate authority.",
+   "If nobody recognises it, treat it as possible mis-issuance and report it to the issuing authority for revocation.",
+   "Update the CAA record so the policy matches reality."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.DS-02",
+   "NIST CSF 2.0 DE.CM-01"
+  ],
+  "rule_id": "CRT-CAA-VIOLATION"
+ },
+ {
+  "owner": "Network engineering",
+  "effort": "M",
+  "prevents": "Traffic to your address space being diverted. An invalid announcement is either a hijack in progress or a stale authorisation — and until you check, you cannot tell which.",
+  "steps": [
+   "Check whether the announcement is yours. If it is not, this is a possible hijack: contact the announcing network and your upstreams now.",
+   "If it is yours, the ROA is wrong or stale — correct the origin AS and prefix length at your regional registry.",
+   "Re-validate and confirm the state clears.",
+   "Review every ROA you publish for the same error."
+  ],
+  "controls": [
+   "NIST SP 1800-14"
+  ],
+  "rule_id": "BGP-RPKI-INVALID"
+ },
+ {
+  "owner": "Network engineering",
+  "effort": "M",
+  "prevents": "Networks that filter on RPKI being unable to tell a hijack of your prefix from a legitimate announcement — so they accept both.",
+  "steps": [
+   "Create Route Origin Authorisations at your regional internet registry for every prefix you announce.",
+   "Set the maximum prefix length deliberately; too permissive re-opens more-specific hijacks.",
+   "Validate, then ask your upstream providers to drop RPKI-invalid routes."
+  ],
+  "controls": [
+   "NIST SP 1800-14"
+  ],
+  "rule_id": "BGP-RPKI-NONE"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "Invoice fraud and credential phishing from a domain that reads as yours. An MX record means it is set up to receive replies — that is preparation, not coincidence.",
+  "steps": [
+   "Check certificate transparency and the site itself for evidence of an active phishing page.",
+   "Block the domain at your mail gateway and web proxy, and add it to your detection rules.",
+   "Warn finance and any customer-facing team, since these domains target payment redirection.",
+   "Consider a takedown request through the registrar, and register the closest variants yourself."
+  ],
+  "controls": [
+   "NIST CSF 2.0 DE.CM-01",
+   "NIST CSF 2.0 PR.AT-01"
+  ],
+  "rule_id": "LOOK-MX"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "S",
+  "prevents": "A confusable domain being used against your staff or customers before you have heard of it.",
+  "steps": [
+   "Check what it currently serves — some are parked, some are yours already.",
+   "Add it to gateway blocklists if it is not yours.",
+   "Keep watching it: a parked lookalike often gains an MX record before a campaign."
+  ],
+  "controls": [
+   "NIST CSF 2.0 DE.CM-01"
+  ],
+  "rule_id": "LOOK-LIVE"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "M",
+  "prevents": "Remote administration and database services being reachable from the whole internet. These are found by mass scanning within hours and are a standard route to ransomware.",
+  "steps": [
+   "Confirm the service should be reachable at all — usually it should not.",
+   "Put it behind the VPN or a zero-trust proxy, or restrict it to known source addresses.",
+   "If it must stay public, enforce multi-factor authentication and rate limiting, and monitor it.",
+   "Re-scan to confirm the port is closed."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.IR-01",
+   "CIS Controls v8 4.1",
+   "CIS Controls v8 12.1"
+  ],
+  "rule_id": "SURF-RISKY-PORT"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "Exploitation of an internet-facing appliance of a type attackers are actively exploiting right now. Edge devices are the most common initial access route in ransomware.",
+  "steps": [
+   "Identify the exact product and version on each listed hostname.",
+   "Check it against the CISA KEV entry and apply the vendor fix or mitigation now.",
+   "Assume compromise if the device was unpatched while the flaw was being exploited: review logs, sessions and configuration for changes.",
+   "Rotate credentials and any VPN or session tokens the device holds."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.RA-01",
+   "NIST CSF 2.0 PR.PS-02",
+   "CIS Controls v8 7.1"
+  ],
+  "rule_id": "SURF-EDGE-KEV"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "S",
+  "prevents": "Edge devices going unmanaged. This is inventory rather than a fault — but you cannot patch what you have not written down.",
+  "steps": [
+   "Confirm each appliance is in your asset inventory and has a named owner.",
+   "Confirm it is in scope for patching and for log collection.",
+   "Remove anything no longer in use."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.AM-01",
+   "CIS Controls v8 1.1"
+  ],
+  "rule_id": "SURF-EDGE"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "S",
+  "prevents": "Subdomain takeover. The CNAME points at a cloud resource that no longer exists, so anyone can claim that resource and serve content from your hostname — with a valid certificate.",
+  "steps": [
+   "Remove the dangling DNS record, or re-claim the cloud resource it points to.",
+   "Check whether anyone else has already claimed it.",
+   "Add decommissioning of DNS records to your cloud teardown process — this is where they come from."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.AM-01",
+   "NIST CSF 2.0 PR.IR-01"
+  ],
+  "rule_id": "SURF-TAKEOVER"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "L",
+  "prevents": "An external footprint too large to govern, where forgotten hosts stay unpatched because nobody knows they exist.",
+  "steps": [
+   "Reconcile the certificate transparency hostnames against your asset inventory.",
+   "Retire what is no longer used, starting with pre-production names exposed publicly.",
+   "Give every remaining hostname a named owner."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.AM-01",
+   "CIS Controls v8 1.1"
+  ],
+  "rule_id": "SURF-LARGE"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "Exploitation of a flaw that is confirmed to be exploited in the wild, on a host anyone can reach. This is the highest-value patch you can apply today.",
+  "steps": [
+   "Patch or apply the vendor mitigation on the affected host now.",
+   "Check the CISA KEV due date as an indicative deadline.",
+   "Look for signs the flaw was already used before you patched.",
+   "Confirm the fix by re-scanning the host."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.RA-01",
+   "NIST CSF 2.0 PR.PS-02",
+   "CIS Controls v8 7.1"
+  ],
+  "rule_id": "VUL-KEV-EXPOSED"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "Exploitation of a flaw with a public exploit or a high predicted exploitation probability, on an internet-facing host.",
+  "steps": [
+   "Patch on your normal high-priority cycle.",
+   "If you cannot patch quickly, restrict access to the service in the meantime.",
+   "Re-scan to confirm."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.RA-01",
+   "CIS Controls v8 7.1"
+  ],
+  "rule_id": "VUL-EXPOSED-HIGH"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "M",
+  "prevents": "Known vulnerable software staying exposed. Version-inferred, so confirm before acting.",
+  "steps": [
+   "Confirm the reported version is accurate — index data infers it from banners.",
+   "Bring the host into the normal patch cycle.",
+   "Reduce what the host exposes publicly."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.PS-02",
+   "CIS Controls v8 7.1"
+  ],
+  "rule_id": "VUL-EXPOSED"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "An address inside your own network operating as attacker infrastructure. Treat this as an active incident, not a hygiene item.",
+  "steps": [
+   "Identify and isolate the host behind the address.",
+   "Open an incident: this indicates compromise, not misconfiguration.",
+   "Preserve evidence before rebuilding, and check what else that host could reach.",
+   "Confirm the listing clears once remediated."
+  ],
+  "controls": [
+   "NIST CSF 2.0 DE.CM-01",
+   "NIST CSF 2.0 RS.MA-01"
+  ],
+  "rule_id": "CMP-C2"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "Your address space being used for attacks against others, which also damages your mail and network reputation.",
+  "steps": [
+   "Identify the host and what it is sending.",
+   "Remediate, then request delisting from the relevant blocklist.",
+   "Check whether the same weakness exists on neighbouring hosts."
+  ],
+  "controls": [
+   "NIST CSF 2.0 DE.CM-01"
+  ],
+  "rule_id": "CMP-ABUSE"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "An attacker logging in with valid credentials and a stolen session cookie, which bypasses multi-factor authentication entirely.",
+  "steps": [
+   "Force a password reset and revoke all active sessions and refresh tokens for affected staff.",
+   "Tighten conditional access — device compliance, not just multi-factor.",
+   "Rebuild the infected devices rather than cleaning them.",
+   "Check for logins from unusual locations in the period since infection."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.AA-01",
+   "NIST CSF 2.0 PR.AA-05"
+  ],
+  "rule_id": "DW-STEALER-30"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "Older credential theft still being usable because nothing was rotated at the time.",
+  "steps": [
+   "Rotate credentials for the affected accounts and revoke long-lived sessions.",
+   "Confirm those accounts have phishing-resistant multi-factor authentication.",
+   "Review whether corporate credentials are being used on personal devices."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.AA-01"
+  ],
+  "rule_id": "DW-STEALER-EMP"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "Reuse of credentials exposed in a third-party breach against your own systems.",
+  "steps": [
+   "Force resets for accounts matching the breached domain.",
+   "Check the breached credentials against your own directory for reuse.",
+   "Confirm your notification obligations with legal and privacy."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.AA-01",
+   "NIST CSF 2.0 RS.CO-02"
+  ],
+  "rule_id": "BR-PUBLIC-90"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "The same route being used twice. The listing is months old, so the question is no longer containment but whether the entry point was ever closed.",
+  "steps": [
+   "Confirm the incident was investigated and the entry route identified.",
+   "Verify the fix is still in place — configuration drifts back.",
+   "Check whether the same group has since listed anyone in your sector using the same method."
+  ],
+  "controls": [
+   "NIST CSF 2.0 RC.RP-01",
+   "NIST CSF 2.0 ID.IM-01"
+  ],
+  "rule_id": "DW-LEAK-180"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "S",
+  "prevents": "A historic listing being forgotten rather than closed out.",
+  "steps": [
+   "Confirm the incident is closed and the lessons recorded.",
+   "Keep the record: leak-site listings are frequently re-published and re-reported as new."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.IM-01"
+  ],
+  "rule_id": "DW-LEAK-OLD"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "A subsidiary's breach reaching the parent through shared identity, network or supplier paths.",
+  "steps": [
+   "Confirm the subsidiary relationship in the GLEIF record before acting on it.",
+   "Establish what the subsidiary shares with the parent — directory, VPN, tooling, suppliers.",
+   "Apply the same containment checks to the shared paths, not just to the subsidiary.",
+   "Decide whether group reporting duties are engaged, with legal."
+  ],
+  "controls": [
+   "NIST CSF 2.0 GV.SC-01",
+   "NIST CSF 2.0 RS.MA-01"
+  ],
+  "rule_id": "DW-LEAK-SUB"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "S",
+  "prevents": "An old claim being rediscovered and treated as new.",
+  "steps": [
+   "Confirm the earlier assessment and whether credentials were rotated at the time.",
+   "Record the outcome so a repeat claim can be compared rather than re-investigated."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.IM-01"
+  ],
+  "rule_id": "DW-FORUM-OLD"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "S",
+  "prevents": "Old infostealer exposure staying valid because nothing was rotated.",
+  "steps": [
+   "Confirm the affected credentials were rotated when this was first seen.",
+   "Check the accounts have phishing-resistant multi-factor authentication now."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.AA-01"
+  ],
+  "rule_id": "DW-STEALER-OLD"
+ },
+ {
+  "owner": "Network engineering",
+  "effort": "S",
+  "prevents": "Assuming a campaign has passed. Target lists are reused, and the same hosts are usually named again.",
+  "steps": [
+   "Confirm DDoS protection is active on the named hosts, not just available.",
+   "Review whether the earlier listing produced any measurable impact.",
+   "Keep the hosts on watch for the next campaign window."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.IR-04"
+  ],
+  "rule_id": "DW-DDOS-30"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "S",
+  "prevents": "Breached credentials from the past year still working, which is the most common way old breaches become new incidents.",
+  "steps": [
+   "Confirm resets were forced for accounts matching the breached domain.",
+   "Check the breached credentials against your directory for reuse.",
+   "Confirm multi-factor authentication covers the affected accounts."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.AA-01"
+  ],
+  "rule_id": "BR-PUBLIC-12M"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "S",
+  "prevents": "A historic breach being treated as irrelevant when the credentials may never have been rotated.",
+  "steps": [
+   "Confirm the accounts involved no longer use the exposed credentials.",
+   "Keep the record for context when the next breach names the same domain."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.AA-01"
+  ],
+  "rule_id": "BR-PUBLIC-OLD"
+ },
+ {
+  "owner": "Legal & compliance",
+  "effort": "L",
+  "prevents": "The gap between what was filed and what was actually remediated. A recent 8-K Item 1.05 means the organisation told the market this was material.",
+  "steps": [
+   "Read the filing and any amendment, and confirm the current remediation status against it.",
+   "Track whether an amended filing is due as the investigation concludes.",
+   "Confirm the control failures named in the filing are fixed, not just contained.",
+   "Keep security, legal and investor relations working from the same version."
+  ],
+  "controls": [
+   "NIST CSF 2.0 GV.OC-03",
+   "NIST CSF 2.0 RS.CO-02"
+  ],
+  "rule_id": "DISC-8K-90"
+ },
+ {
+  "owner": "Legal & compliance",
+  "effort": "M",
+  "prevents": "Commitments made in a disclosure quietly lapsing.",
+  "steps": [
+   "Confirm the remediation described in the filing was completed.",
+   "Check whether an amended filing was required and made."
+  ],
+  "controls": [
+   "NIST CSF 2.0 GV.OC-03"
+  ],
+  "rule_id": "DISC-8K-OLD"
+ },
+ {
+  "owner": "Legal & compliance",
+  "effort": "M",
+  "prevents": "An incident disclosed under Item 8.01 being handled with less rigour than one filed as material.",
+  "steps": [
+   "Read the filing and confirm why it was filed under 8.01 rather than 1.05.",
+   "Confirm the materiality assessment is documented, since that judgement may be revisited.",
+   "Track remediation as you would for any disclosed incident."
+  ],
+  "controls": [
+   "NIST CSF 2.0 GV.OC-03"
+  ],
+  "rule_id": "DISC-801"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "Learning about your own incident from the press. Two or more independent publishers naming you is a fact to respond to, whether or not the claim is right.",
+  "steps": [
+   "Establish internally whether the reporting is accurate before responding to it.",
+   "If it is, open an incident and follow the normal process.",
+   "If it is not, record why, because the same story will be recycled.",
+   "Agree a position with communications either way."
+  ],
+  "controls": [
+   "NIST CSF 2.0 RS.CO-02",
+   "NIST CSF 2.0 RS.MA-01"
+  ],
+  "rule_id": "INC-NAMED-30"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "S",
+  "prevents": "A single report being ignored until others repeat it.",
+  "steps": [
+   "Read the source and judge its reliability.",
+   "Confirm internally whether the claim matches anything you know.",
+   "Record the assessment so a second report can be compared quickly."
+  ],
+  "controls": [
+   "NIST CSF 2.0 RS.CO-02"
+  ],
+  "rule_id": "INC-NAMED-1"
+ },
+ {
+  "owner": "Procurement & vendor management",
+  "effort": "S",
+  "prevents": "Generative-AI use going ungoverned. The verification record proves a team set the service up deliberately; the question is whether anyone approved what goes into it.",
+  "steps": [
+   "Confirm who owns the account and what business use it serves.",
+   "Check whether the contract and data-processing terms cover the data being sent.",
+   "Make sure the service is inside your acceptable-use and data-classification policy.",
+   "Record it in the third-party inventory rather than leaving it as a DNS record nobody reads."
+  ],
+  "controls": [
+   "NIST CSF 2.0 GV.SC-01",
+   "NIST CSF 2.0 ID.AM-02"
+  ],
+  "rule_id": "AI-SERVICE-DNS"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "S",
+  "prevents": "An AI provider's incident affecting you unnoticed. Your DNS shows you use them; that makes their incident your inbox.",
+  "steps": [
+   "Read the provider's own incident notice before acting on second-hand reporting.",
+   "Establish whether your data or API keys are in scope.",
+   "Rotate provider API keys if the incident touched credentials or logs.",
+   "Record the assessment, including if the answer is 'no impact'."
+  ],
+  "controls": [
+   "NIST CSF 2.0 GV.SC-08",
+   "NIST CSF 2.0 RS.MA-01"
+  ],
+  "rule_id": "AI-PROVIDER-INC"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "M",
+  "prevents": "An unauthenticated AI service on the internet. Most of these ship with no authentication at all, and an exposed model server leaks prompts, documents and often the ability to run code.",
+  "steps": [
+   "Confirm the service should be internet-facing — it almost never should.",
+   "Put it behind the VPN or an authenticating proxy, or restrict it to known addresses.",
+   "Check the logs for access you cannot account for, and assume prompts and uploaded documents were readable.",
+   "Re-scan to confirm it is no longer reachable."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.IR-01",
+   "NIST CSF 2.0 PR.AA-01",
+   "CIS Controls v8 4.1"
+  ],
+  "rule_id": "AI-EXPOSED-SERVICE"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "S",
+  "prevents": "Guessing. The port is shared with a lot of ordinary software, so this is a prompt to check rather than a finding to act on.",
+  "steps": [
+   "Identify what is actually listening on the port.",
+   "If it is an AI or notebook service, treat it as AI-EXPOSED-SERVICE.",
+   "If it is something else, no action is needed here."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.AM-01"
+  ],
+  "rule_id": "AI-EXPOSED-PORT"
+ },
+ {
+  "owner": "IT operations",
+  "effort": "S",
+  "prevents": "AI platforms running outside the asset inventory, which is where shadow AI usually starts.",
+  "steps": [
+   "Confirm the platform has a named owner and is in the asset inventory.",
+   "Check it requires authentication and is patched — several of these have CISA KEV entries.",
+   "Confirm what data it is allowed to process."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.AM-01",
+   "NIST CSF 2.0 ID.AM-02"
+  ],
+  "rule_id": "AI-HOST"
+ },
+ {
+  "owner": "Legal & compliance",
+  "effort": "M",
+  "prevents": "An AI harm involving your organisation being handled only once it is in the press.",
+  "steps": [
+   "Read the report and establish whether your organisation is the deployer, the developer or a bystander.",
+   "Involve legal and the AI governance owner, since these carry regulatory as well as reputational weight.",
+   "Check whether the system named is still in use and under what controls."
+  ],
+  "controls": [
+   "NIST CSF 2.0 GV.RM-01"
+  ],
+  "rule_id": "AI-INCIDENT"
+ },
+ {
+  "owner": "Procurement & vendor management",
+  "effort": "M",
+  "prevents": "A supplier's incident becoming yours while nobody has asked them anything. Your DNS shows you depend on them.",
+  "steps": [
+   "Ask the supplier five factual questions: scope, whether your data is affected, containment status, indicators to search for, and timeline.",
+   "Search your own logs for the indicators they provide.",
+   "Review what access and data the supplier holds, and revoke what is no longer needed.",
+   "Check contractual and regulatory notification duties with legal — do not assume one applies."
+  ],
+  "controls": [
+   "NIST CSF 2.0 GV.SC-01",
+   "NIST CSF 2.0 GV.SC-08"
+  ],
+  "rule_id": "TP-VENDOR-INC"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "A broker selling working access to your network to a ransomware crew. This is the step immediately before an intrusion, and it is the most valuable warning on this platform.",
+  "steps": [
+   "Treat as an active investigation, not a hygiene item — the claim is that access already exists.",
+   "Review remote access first: VPN, RDP, Citrix and any admin panel exposed to the internet.",
+   "Force password resets and revoke sessions for privileged and remote-access accounts.",
+   "Hunt for unfamiliar logins, new accounts and new persistence in the period covered by the claim.",
+   "Remember the claim is unverified — confirm before escalating externally."
+  ],
+  "controls": [
+   "NIST CSF 2.0 DE.CM-01",
+   "NIST CSF 2.0 PR.AA-05",
+   "NIST CSF 2.0 RS.MA-01"
+  ],
+  "rule_id": "DW-ACCESS-14"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "L",
+  "prevents": "Nothing at this stage — the listing means data is already claimed to be taken. What remains is containment, obligation and preventing a repeat.",
+  "steps": [
+   "Open a major incident and confirm whether the claim is genuine before responding publicly.",
+   "Establish what data the group actually holds, from their own sample rather than their claim.",
+   "Engage legal and privacy on notification duties, and communications on customer messaging.",
+   "Once contained, find the entry route and close it — otherwise the same group returns."
+  ],
+  "controls": [
+   "NIST CSF 2.0 RS.MA-01",
+   "NIST CSF 2.0 RS.CO-02",
+   "NIST CSF 2.0 RC.RP-01"
+  ],
+  "rule_id": "DW-LEAK-30"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "Credentials or data offered for sale being bought and used while nobody has checked whether the claim is real.",
+  "steps": [
+   "Assess whether the claim is credible — many are recycled or invented.",
+   "If it names a system, verify that system's exposure and access logs.",
+   "Rotate any credentials the claim plausibly covers.",
+   "Record the assessment either way, so a repeat claim can be compared."
+  ],
+  "controls": [
+   "NIST CSF 2.0 DE.CM-01",
+   "NIST CSF 2.0 PR.AA-01"
+  ],
+  "rule_id": "DW-FORUM-30"
+ },
+ {
+  "owner": "Network engineering",
+  "effort": "M",
+  "prevents": "An availability outage from a hacktivist campaign that has already published you as a target — one of the few attacks you get warning of.",
+  "steps": [
+   "Confirm the named hosts are behind DDoS protection, and that it is in active rather than monitoring mode.",
+   "Check the protection covers the actual origin, not just the CDN hostname.",
+   "Confirm your provider escalation path and who can authorise mitigation out of hours.",
+   "Watch the listed hosts for the campaign window."
+  ],
+  "controls": [
+   "NIST CSF 2.0 PR.IR-04",
+   "NIST CSF 2.0 RS.MA-01"
+  ],
+  "rule_id": "DW-DDOS-7"
+ },
+ {
+  "owner": "Security operations",
+  "effort": "M",
+  "prevents": "Being unprepared for the techniques currently being used against organisations like yours. Context rather than a fault.",
+  "steps": [
+   "Review which groups are active in your sector and country, and what they are known to use.",
+   "Check your detections cover their common initial access routes — phishing, exposed edge devices, valid accounts.",
+   "Use it to prioritise this quarter's hardening, not to raise an alert."
+  ],
+  "controls": [
+   "NIST CSF 2.0 ID.RA-03",
+   "NIST CSF 2.0 DE.CM-01"
+  ],
+  "rule_id": "THR-SECTOR"
+ },
+ {
+  "owner": "Procurement & vendor management",
+  "effort": "L",
+  "prevents": "A single provider outage affecting far more of your estate than anyone realised. Inventory rather than a fault.",
+  "steps": [
+   "Record the dependency and what it would take down.",
+   "Confirm the recovery plan does not itself depend on the same provider.",
+   "Weigh a second provider against the cost for the services that matter most."
+  ],
+  "controls": [
+   "NIST CSF 2.0 GV.SC-04",
+   "NIST CSF 2.0 ID.AM-04"
+  ],
+  "rule_id": "TP-CONCENTRATION"
+ }
+]

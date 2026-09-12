@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ResponsiveStream } from '@nivo/stream'
 import { useApi } from '../lib/api'
-import { Gloss } from '../lib/glossary'
 import { useRange } from '../App'
+import { PageSources, SectionLabel } from '../components/ui'
 import { Card, Stat, Table, Empty, SourceLink, Tabs, When, Legend } from '../components/ui'
 import { HBar } from '../components/charts'
 import WorldMap from '../components/WorldMap'
@@ -28,17 +28,18 @@ export default function DarkWeb() {
         <div>
           <div className="eyebrow">Deep & dark web · forums · chatter</div>
           <h2>What is being claimed, sold, leaked and plotted</h2>
-          <p><Gloss>Metadata only, from reputable third-party trackers — leak-site monitors, outlets that report forum and market posts, infostealer and breach catalogues, hacktivist target lists and open community chatter. We never visit .onion sites, never store credentials, and label claims as unverified.</Gloss></p>
+          <p>Metadata only, from reputable third-party trackers — leak-site monitors, outlets that report forum and market posts, infostealer and breach catalogues, hacktivist target lists and open community chatter. We never visit .onion sites, never store credentials, and label claims as unverified.</p>
         </div>
       </div>
       <div className="grid" style={{ gridTemplateColumns: 'repeat(6, minmax(0,1fr))', marginBottom: 14 }}>
-        <Stat label="Leak-site listings" value={compact(c.leaksite)} hint={`${c.groups} active groups`} onClick={() => setTab('leaks')} />
-        <Stat label="Monitored orgs listed" value={c.watch_listed} hint="on a leak site in window" onClick={() => setTab('leaks')} />
-        <Stat label="Forum & market claims" value={c.forum} hint="access, data, credentials" onClick={() => setTab('claims')} />
-        <Stat label="Infostealer-exposed orgs" value={c.stealer_orgs} hint={`of ${c.stealer_checked} checked`} onClick={() => setTab('creds')} />
-        <Stat label="DDoS target domains" value={c.ddos} hint="NoName057(16) DDoSia" onClick={() => setTab('hacktivist')} />
-        <Stat label="Sources catalogued" value={compact(data.catalogue_total)} hint="forums, markets, channels" onClick={() => setTab('catalogue')} />
+        <Stat label={`Leak-site listings · ${range}d`} value={compact(c.leaksite)} hint={`${c.groups} active groups`} onClick={() => setTab('leaks')} />
+        <Stat label={`Monitored orgs listed · ${range}d`} value={c.watch_listed} hint="on a leak site in the window" onClick={() => setTab('leaks')} />
+        <Stat label={`Forum & market claims · ${range}d`} value={c.forum} hint="access, data, credentials" onClick={() => setTab('claims')} />
+        <Stat label="Infostealer-exposed orgs · now" value={c.stealer_orgs} hint={`of ${c.stealer_checked} checked`} onClick={() => setTab('creds')} />
+        <Stat label={`DDoS target domains · ${range}d`} value={c.ddos} hint="NoName057(16) DDoSia" onClick={() => setTab('hacktivist')} />
+        <Stat label="Sources catalogued · now" value={compact(data.catalogue_total)} hint="forums, markets, channels" onClick={() => setTab('catalogue')} />
       </div>
+      <SectionLabel>Visual overview, then each record type</SectionLabel>
       <Tabs value={tab} onChange={setTab} tabs={[{ id: 'overview', label: 'Overview' }, { id: 'leaks', label: 'Leak sites', count: c.leaksite }, { id: 'claims', label: 'Forum & market claims', count: c.forum },
         { id: 'creds', label: 'Credentials & breaches' }, { id: 'hacktivist', label: 'Hacktivist targeting', count: c.ddos }, { id: 'chatter', label: 'Chatter' }, { id: 'catalogue', label: 'Source catalogue' }]} />
 
@@ -141,7 +142,7 @@ export default function DarkWeb() {
                   <SourceLink url={i.url} /></div>))}
             </div>
           </Card>
-          <Card title="What the chatter is about"><HBar data={data.chatter_themes} label="theme" value="n" onClick={d => nav(`/analyst?theme=${encodeURIComponent(d.theme)}`)} /></Card>
+          <Card title="What the chatter is about"><HBar data={data.chatter_themes} label="theme" value="n" onClick={d => nav(`/analyst?topic=${encodeURIComponent(d.theme)}`)} /></Card>
         </div>
       )}
 
@@ -156,6 +157,7 @@ export default function DarkWeb() {
           </Card>
         </div>
       )}
+      <PageSources cats={['Dark web', 'Chatter']} note="Metadata only, via third-party trackers — AEGIS never visits .onion sites, joins Telegram channels or stores credentials." />
     </div>
   )
 }

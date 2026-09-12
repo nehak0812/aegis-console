@@ -12,13 +12,19 @@ from aegis import db, registry
 from aegis.intel import pipeline
 
 # importing registers the collectors
-from aegis.collectors import (actors, ai_risk, blocklists, chatter, darkweb, feeds, filings, gleif,  # noqa: F401
-                              status, surface, universe, vulns)
+from aegis.collectors import (actors, ai_risk, ai_stack, blocklists, chatter, darkweb, feeds, filings, gleif,  # noqa: F401
+                              hardening, phishing, reports, status, surface, universe, vulns)
 
 CATCH_UP_ORDER = ["universe", "actors", "cisa_kev", "first_epss", "ransomlook", "ransomware_live", "ransomware_groups", "hibp",
                   "forum_claims", "sec_8k", "pub_news", "pub_gov", "pub_vendor", "psirt", "pub_analyst", "ddosia", "status_pages",
                   "hn", "mastodon", "reddit", "mit_ai_risk", "ai_incidents", "cloud_ranges", "exploit_refs", "cve_details",
-                  "deepdarkcti", "gleif", "surface", "compromised_ips", "hudsonrock"]
+                  "deepdarkcti", "gleif", "surface", "compromised_ips", "hudsonrock",
+                  # v2.2 AI-era threats
+                  "mitre_atlas", "ai_stack", "pub_ai_sec", "pub_influence", "anthropic_reports", "misp_osint", "ioc_repos",
+                  "phish_feeds", "nrd_whoisds", "ioc_liveness", "offensive_ai", "epss_trend",
+                  "hardening"]  # domain / certificate / routing hardening — last: it reads what surface stored
+from aegis.collectors import supplier_intel  # noqa: F401,E402 — fourth parties, GLEIF ownership, entity screening, SbD pledge
+CATCH_UP_ORDER.append("supplier_intel")  # daily; runs after the org scans so the console has provider context
 
 _sched: BackgroundScheduler | None = None
 _pipe_lock = threading.Lock()
@@ -59,6 +65,8 @@ def start() -> None:
     global _sched
     db.init()
     registry.sync_sources()
+    from aegis.intel.providers import sync_catalogue
+    sync_catalogue()
     _sched = BackgroundScheduler(executors={"default": ThreadPoolExecutor(4)},
                                  job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600})
     for sid, job in registry.JOBS.items():

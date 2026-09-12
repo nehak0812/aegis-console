@@ -75,24 +75,9 @@ CREATE TABLE IF NOT EXISTS dependency (
 );
 CREATE INDEX IF NOT EXISTS ix_dep_vendor ON dependency(vendor);
 
--- v2.1: an action is the record of somebody fixing a finding. Closure is proved by the
--- finding disappearing on a later scan, not asserted by a person.
-CREATE TABLE IF NOT EXISTS action (
-  id TEXT PRIMARY KEY, org_id TEXT, source_kind TEXT, source_key TEXT, rule_id TEXT,
-  title TEXT, level TEXT, confidence TEXT, owner_role TEXT, owner TEXT, status TEXT,
-  due TEXT, created TEXT, updated TEXT, verified_closed_at TEXT, reopened INTEGER DEFAULT 0, history TEXT
-);
-CREATE INDEX IF NOT EXISTS ix_action_org ON action(org_id, status);
-CREATE INDEX IF NOT EXISTS ix_action_status ON action(status, due);
--- a decision to stop raising a finding: false_positive until withdrawn, accepted_risk until it expires
-CREATE TABLE IF NOT EXISTS feedback (
-  org_id TEXT, source_key TEXT, decision TEXT, reason TEXT, expires TEXT, by TEXT, at TEXT,
-  PRIMARY KEY (org_id, source_key)
-);
 CREATE TABLE IF NOT EXISTS finding (
   id TEXT PRIMARY KEY, org_id TEXT, category TEXT, title TEXT, detail TEXT, severity TEXT,
-  rule_id TEXT, evidence_url TEXT, source_id TEXT, observed TEXT, first_seen TEXT, last_seen TEXT, data TEXT,
-  confidence TEXT
+  rule_id TEXT, evidence_url TEXT, source_id TEXT, observed TEXT, first_seen TEXT, last_seen TEXT, data TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_finding_org ON finding(org_id, severity);
 
@@ -104,26 +89,83 @@ CREATE TABLE IF NOT EXISTS incident (
 CREATE INDEX IF NOT EXISTS ix_incident_last ON incident(last_seen);
 
 CREATE TABLE IF NOT EXISTS impact (
-  incident_id TEXT, org_id TEXT, link_type TEXT, severity TEXT, reason TEXT, evidence TEXT, confidence TEXT,
+  incident_id TEXT, org_id TEXT, link_type TEXT, severity TEXT, reason TEXT, evidence TEXT,
   PRIMARY KEY (incident_id, org_id, link_type)
 );
 CREATE INDEX IF NOT EXISTS ix_impact_org ON impact(org_id);
 
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, updated TEXT);
+
+-- v2.2: indicators from published threat reports, phishing feeds and newly registered lookalike domains.
+-- Only the indicator, a <=200-char context snippet and the report link are stored — never report bodies.
+CREATE TABLE IF NOT EXISTS ioc (
+  id TEXT PRIMARY KEY, value TEXT, type TEXT, kind TEXT, source_id TEXT, publisher TEXT, report_title TEXT, report_url TEXT,
+  published TEXT, context TEXT, tags TEXT, first_seen TEXT, last_seen TEXT, attrs TEXT,
+  org_id TEXT, match TEXT, token TEXT, how TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_ioc_org ON ioc(org_id);
+CREATE INDEX IF NOT EXISTS ix_ioc_kind ON ioc(kind, published);
+CREATE INDEX IF NOT EXISTS ix_ioc_value ON ioc(value);
+
+-- v2.2: provider catalogue (shipped + analyst-added) — names/aliases for reporting, DNS patterns for dependencies
+CREATE TABLE IF NOT EXISTS provider (
+  name TEXT PRIMARY KEY, category TEXT, aliases TEXT, patterns TEXT, observable INTEGER DEFAULT 1, status_url TEXT,
+  source TEXT, added TEXT, notes TEXT
+);
+
+-- v2.2: one row per surface scan (last 12 kept) — DNS change detection; shares its shape with the v2.1 drift snapshot
+CREATE TABLE IF NOT EXISTS snapshot (
+  org_id TEXT, scanned_at TEXT, hostnames TEXT, ips TEXT, ports TEXT, edge TEXT, ns TEXT, mx TEXT, dnssec INTEGER, caa TEXT,
+  PRIMARY KEY (org_id, scanned_at)
+);
+
+-- v2.1 "Prevent" (same shape as production): one action per Critical/High/Medium finding, with lifecycle and verified closure
+CREATE TABLE IF NOT EXISTS action (
+  id TEXT PRIMARY KEY, org_id TEXT, source_kind TEXT, source_key TEXT, rule_id TEXT, title TEXT, level TEXT, confidence TEXT,
+  owner_role TEXT, owner TEXT, status TEXT, due TEXT, created TEXT, updated TEXT, verified_closed_at TEXT, reopened INTEGER DEFAULT 0,
+  history TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_action_org ON action(org_id, status);
+-- which CVEs each organisation's own internet-facing hosts report (Shodan InternetDB), kept over time so a fix can be observed:
+-- fixed_at = the first scan that no longer reports it (patched, or the host removed). Reappearance clears fixed_at.
+CREATE TABLE IF NOT EXISTS cve_exposure (
+  org_id TEXT, cve TEXT, first_seen TEXT, last_seen TEXT, fixed_at TEXT, hosts TEXT,
+  PRIMARY KEY (org_id, cve)
+);
+-- analyst decisions that suppress a finding: false_positive (until withdrawn) or accepted_risk (until expires)
+CREATE TABLE IF NOT EXISTS feedback (
+  source_key TEXT PRIMARY KEY, org_id TEXT, rule_id TEXT, kind TEXT, reason TEXT, expires TEXT, by TEXT, at TEXT
+);
 """
 
 JSON_COLS = {"domains", "indices", "aliases", "themes", "entities", "org_ids", "cwes", "exploit_refs",
              "sectors", "countries", "refs", "extra", "attrs", "data", "vendors", "products", "actors",
-             "cves", "sources", "feeds", "tools", "techniques", "cs_targets", "evidence", "history"}
+             "cves", "sources", "feeds", "tools", "techniques", "cs_targets", "evidence", "tags", "hostnames", "ips",
+             "ports", "edge", "ns", "mx", "caa", "patterns", "velocity", "history", "hardening", "fix", "hosts"}
 
 # columns added after first release — applied idempotently by init()
 MIGRATIONS = {
     "actor": {"tools": "TEXT", "techniques": "TEXT", "cs_targets": "TEXT", "cs_url": "TEXT", "misp_uuid": "TEXT"},
-    "org": {"sub_industry": "TEXT", "isin": "TEXT"},
-    # v2.1: how strongly the evidence supports the finding (confirmed | likely | unconfirmed)
-    "finding": {"confidence": "TEXT"},
-    "impact": {"confidence": "TEXT"},
+    "org": {"sub_industry": "TEXT", "isin": "TEXT", "hardening": "TEXT"},  # hardening: JSON from collectors/hardening.py
+    # v2.2 speed & spread
+    "vuln": {"epss_7d": "REAL", "epss_30d": "REAL",
+             # v2.3 vendor fixes: evidence from the CVE record / CISA KEV
+             "fix": "TEXT", "fix_checked": "TEXT", "kev_action": "TEXT", "kev_notes": "TEXT"},
+    "finding": {"act_by": "TEXT", "deadline_rule": "TEXT", "confidence": "TEXT"},  # confidence: v2.1 Prevent (production)
+    "incident": {"velocity": "TEXT"},
+    # The live v2.1 deployment created feedback(org_id, source_key, decision, reason, expires, by, at).
+    # This build names the same concept `kind` and adds `rule_id`. CREATE TABLE IF NOT EXISTS never
+    # alters an existing table, so without these the suppression read in actions.suppressed() —
+    # "SELECT source_key, kind, expires FROM feedback" — raises on every pipeline pass and takes the
+    # whole actions stage with it. The old `decision` column stays, unused and harmless.
+    "feedback": {"kind": "TEXT", "rule_id": "TEXT"},
 }
+
+# One-off data moves that belong with a migration: a renamed column has to carry its values across,
+# or the rows survive while the meaning does not. Idempotent, and skipped where the column is absent.
+BACKFILLS = [
+    ("feedback", "kind", "UPDATE feedback SET kind = decision WHERE kind IS NULL AND decision IS NOT NULL"),
+]
 
 
 def now() -> str:
@@ -143,14 +185,39 @@ def conn() -> sqlite3.Connection:
     return c
 
 
+def _add_missing_columns(c) -> None:
+    """A database from an earlier version (or another build) may already hold a table with fewer columns, and
+    CREATE TABLE IF NOT EXISTS never alters it. Add every column SCHEMA declares that the table lacks — additive only:
+    nothing is renamed, retyped or dropped, so the earlier version still runs on the upgraded database."""
+    mem = sqlite3.connect(":memory:")
+    mem.executescript(SCHEMA)
+    for (t,) in mem.execute("SELECT name FROM sqlite_master WHERE type='table' AND sql NOT LIKE 'CREATE VIRTUAL%'").fetchall():
+        have = {r[1] for r in c.execute(f'PRAGMA table_info("{t}")').fetchall()}
+        for _, col, typ, *_ in mem.execute(f'PRAGMA table_info("{t}")').fetchall():
+            if have and col not in have:
+                try:
+                    c.execute(f'ALTER TABLE "{t}" ADD COLUMN "{col}" {typ or ""}')
+                    print(f"[db] upgraded: added {t}.{col}", flush=True)
+                except sqlite3.OperationalError as e:
+                    print(f"[db] could not add {t}.{col}: {e}", flush=True)
+    mem.close()
+
+
 def init() -> None:
     c = conn()
     c.executescript(SCHEMA)
+    _add_missing_columns(c)
     for table, cols in MIGRATIONS.items():
         have = {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
         for col, typ in cols.items():
             if col not in have:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+    for table, needs, sql in BACKFILLS:
+        have = {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+        # only where every column the statement touches is present: a fresh database has the new
+        # column but never had the old one
+        if needs in have and all(w in have for w in ("decision",) if table == "feedback"):
+            c.execute(sql)
     c.commit()
 
 
@@ -207,6 +274,22 @@ def upsert(table: str, rows: list[dict] | dict, keep: Iterable[str] = ()) -> int
         sql = (f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))}) "
                f"ON CONFLICT({', '.join(pkcols)}) DO UPDATE SET {upd}")
         c.execute(sql, [_enc(r[k]) for k in cols])
+    c.commit()
+    return len(rows)
+
+
+def replace_set(table: str, rows: list[dict], where: str = "1=1", params: Iterable[Any] = ()) -> int:
+    """Replace the rows matching `where` with `rows` without an empty window: upsert the new set first, then delete only the rows
+    (in scope) that are no longer present. A page read while the pipeline runs never sees an empty table."""
+    upsert(table, rows)
+    c = conn()
+    pk = [r[1] for r in sorted(c.execute(f"PRAGMA table_info({table})").fetchall(), key=lambda r: r[5]) if r[5]]
+    cols = ", ".join(pk)
+    tmp = f"_keep_{table}"
+    c.execute(f"CREATE TEMP TABLE IF NOT EXISTS {tmp} ({cols}, PRIMARY KEY ({cols}))")
+    c.execute(f"DELETE FROM {tmp}")
+    c.executemany(f"INSERT OR IGNORE INTO {tmp} VALUES ({', '.join('?' * len(pk))})", [tuple(_enc(r[k]) for k in pk) for r in rows])
+    c.execute(f"DELETE FROM {table} WHERE ({where}) AND ({cols}) NOT IN (SELECT {cols} FROM {tmp})", tuple(params))
     c.commit()
     return len(rows)
 

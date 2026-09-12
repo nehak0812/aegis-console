@@ -37,8 +37,11 @@ that SEC, Wikidata and RIPEstat ask for.
 | **Exposure & vulns** | Exploited software (KEV × EPSS × public exploits), watchlist exposure matrix, ports, edge products, cloud, compromised-IP feeds. |
 | **Dark web & chatter** | Leak-site listings, forum/market claims (access, data, credentials), infostealer exposure, public breaches, hacktivist DDoS targets, community chatter, criminal-source catalogue. |
 | **Adversaries** | 1,400+ actors in one alias index (CrowdStrike, Microsoft, MITRE, MISP names), ranked by live activity, with targets, victims, tools, techniques and who reports on them. |
-| **Analyst view** | Key themes, recurring aspects (rank over 8 weeks), the publisher × theme matrix, consensus entities and theme co-occurrence. |
-| **AI risk** | MIT AI Risk Repository taxonomy with live counts, AI incidents classified into MIT subdomains, and AIAAIC context. |
+| **Speed & spread** *(v2.2)* | How fast threats become real and spread: time to exploit (CVE disclosure → CISA KEV) with its trend and fastest vendors, incidents spreading across publishers (curves), rising exploit likelihood (EPSS week-on-week), lookalike go-live speed, extortion-group tempo, and an **act-by clock on every finding** from one named deadline rule (DL-72H / DL-CISA / DL-7D-EXPLOITED / DL-7D / DL-30D / DL-90D). |
+| **Provider concentration** *(v2.2)* | A catalogue of ~130 providers (names for headlines, DNS patterns for dependencies), applied to stored scans each pipeline run; providers with issues now — including those invisible in DNS, reached through organisations named as affected customers; analysts can add or extend providers (e.g. Databricks) from the console. |
+| **Impersonation & IOCs** *(v2.2)* | Brand lookalikes from threat-report indicators, newly registered domains and phishing feeds; organisation websites listed for malware or ClickFix lures; DNS changes (possible hijack); identity-attack and influence-operation context; indicator look-up and a CSV hunt pack. |
+| **Analyst view** | Key themes, recurring aspects (rank over 8 weeks), the publisher × theme matrix (filter by theme family), consensus entities and theme co-occurrence. |
+| **AI risk** | *(v2.2)* AI stack watch: AI/LLM products in CISA KEV, AI package advisories, exposed self-hosted AI services across the watchlist, generative-AI providers in DNS, MITRE ATLAS techniques in the reporting, AI-vendor misuse reports, offensive AI frameworks (context). Then the MIT AI Risk Repository taxonomy, AI incidents and AIAAIC context. |
 | **Sources & method** | Health, cadence, licence and per-feed status of every source, plus the rating rules, linkage rules, theme dictionary and Bitsight coverage map. |
 
 ## Rating: four levels, no scores
@@ -79,8 +82,13 @@ most severe active finding. Examples:
 - **Threat intel:** MITRE ATT&CK, the MISP galaxy (with CrowdStrike names), and CrowdStrike Adversary Universe targeting.
 - **Publishers:** 36 vendor research blogs (incl. CrowdStrike, Mandiant, Microsoft, Unit 42, Talos, Bitsight), 14 government/CERT feeds, 14 news outlets, Forrester, SANS ISC, Schneier.
 - **Chatter:** Hacker News, Mastodon, Reddit security communities. Bluesky is disabled because its public search now returns 403.
-- **AI:** MIT AI Risk Repository, AI Incident Database, AIAAIC.
-- **Service status:** 17 provider status pages.
+- **AI:** MIT AI Risk Repository, AI Incident Database, AIAAIC; *(v2.2)* MITRE ATLAS, OSV.dev AI package advisories, NVD huntr CVEs, GitHub malware advisories, 13 AI-security / AI-vendor feeds (OpenAI misuse reports, OWASP GenAI, prompt-injection research …).
+- **Indicators & impersonation *(v2.2)*:** Anthropic threat-intelligence reports, CIRCL and botvrij.eu MISP OSINT feeds, Cisco Talos (CC0), Unit 42 (GPL-3.0) and Meta threat-research (MIT) indicator repositories, WhoisDS newly registered domains, OpenPhish, PhishTank, URLhaus, ThreatFox.
+- **Influence & fraud *(v2.2)*:** EUvsDisinfo, DFRLab, Cyfluence Research Center, NewsGuard, All Eyes On Wagner, FTC.
+- **Service status:** 19 provider status pages (incl. OpenAI and Anthropic).
+
+Optional: set `GITHUB_TOKEN` (a fine-grained token with no repository permissions) to lift GitHub's 60-calls/hour anonymous limit for the
+indicator repositories, malware advisories and offensive-framework metadata. `AEGIS_VERSION` sets the version shown in the console and `/api/health`.
 
 ## Guardrails (tested in `tests/test_aegis2.py`)
 
@@ -95,3 +103,7 @@ most severe active finding. Examples:
 - **Surface-scan rotation:** each passive scan covers 12 organisations per 15 minutes, so the full universe takes about 14 hours. Until then, organisations show "Surface scan queued".
 - **No free source:** Bitsight-style client-side botnet sinkhole telemetry, desktop/mobile software and file sharing have no free equivalent. They are stated as not assessed.
 - **Name-based links:** CVEs from InternetDB are version-inferred, and hostname-based product links are marked "unconfirmed".
+- **New-domain coverage (v2.2):** the free WhoisDS list is a ~70k/day gTLD sample; ccTLDs (.uk, .de, .fr) are weakly covered. Lookalikes are only
+  resolved through public DNS, never contacted. DNS-change rules need three scans of a domain (about two days) before they can fire.
+- **Licences (v2.2):** abuse.ch URLhaus / ThreatFox are non-commercial; Unit 42 indicators are GPL-3.0. Telegram, key scraping and person-level
+  influence-operation data are excluded by design.

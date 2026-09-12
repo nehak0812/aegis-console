@@ -1,9 +1,9 @@
 import { ReactNode, useMemo, useState, useRef, useEffect } from 'react'
-import { AlertOctagon, AlertTriangle, AlertCircle, Info, ExternalLink, ChevronDown, ChevronUp, X, Check } from 'lucide-react'
+import { AlertOctagon, AlertTriangle, AlertCircle, Info, ExternalLink, ChevronDown, ChevronUp, Timer, X, Check } from 'lucide-react'
 import { useApi, Level } from '../lib/api'
 import { SEV_COLOR, SEV_LABEL, SEV_ORDER } from '../lib/chartTheme'
 import { ago, host } from '../lib/format'
-import { gloss } from '../lib/glossary'
+import { useNavigate } from 'react-router-dom'
 
 const SEV_ICON = { critical: AlertOctagon, high: AlertTriangle, medium: AlertCircle, low: Info }
 
@@ -13,12 +13,6 @@ export function useRules() {
 }
 
 /** Severity: always icon + label (never colour alone). Hover shows the rule that assigned it. */
-/** Playbooks keyed by rule id: what a finding costs to fix, who fixes it, and how. */
-export function usePlaybooks() {
-  const { data } = useApi<any>('/method', 3600)
-  return useMemo(() => Object.fromEntries(((data?.playbooks) || []).filter(Boolean).map((p: any) => [p.rule_id, p])), [data])
-}
-
 export function Sev({ level, rule, compact }: { level?: string | null; rule?: string | null; compact?: boolean }) {
   const rules = useRules()
   if (!level) return null
@@ -32,24 +26,28 @@ export function Sev({ level, rule, compact }: { level?: string | null; rule?: st
   )
 }
 
-const CONF_HELP: Record<string, string> = {
-  confirmed: 'Confirmed: an observed record — a DNS, RDAP or certificate lookup, a filing, or a CVE on a host we resolved.',
-  likely: 'Likely: a strong but indirect join, such as an exact name match or a product seen without its version.',
-  unconfirmed: 'Unconfirmed: an inference or someone else’s claim. Never presented as Critical.',
-}
-
-/** How strongly the evidence supports a finding. Neutral tokens on purpose: colour is reserved for severity. */
-export function Conf({ level }: { level?: string | null }) {
-  if (!level) return null
-  return <span className={`pill conf ${level}`} title={CONF_HELP[level] || level}>{level}</span>
-}
-
 export function Why({ rule, level }: { rule?: string | null; level?: string | null }) {
   const rules = useRules()
   if (!rule) return null
   const r = rules[rule]
   return (
     <div className="why"><b>Why {SEV_LABEL[level || r?.level || 'low']}:</b> {r?.rule || rule} <span className="muted mono">[{rule}]</span></div>
+  )
+}
+
+/** "Act by" clock: time left (or overdue) against the deadline rule; hover shows the rule. Always icon + words, never colour alone. */
+export function ActBy({ ts, rule }: { ts?: string | null; rule?: string | null }) {
+  const rules = useRules()
+  if (!ts) return null
+  const ms = Date.parse(ts) - Date.now()
+  const h = Math.round(Math.abs(ms) / 3600000)
+  const span = h < 48 ? `${h}h` : `${Math.round(h / 24)}d`
+  const txt = ms < 0 ? `overdue by ${span}` : `act within ${span}`
+  const why = rule && rules[rule] ? `${rule}: ${rules[rule].rule}` : undefined
+  return (
+    <span className="pill" title={why} style={ms < 0 ? { borderColor: 'var(--critical)', color: 'var(--ink)' } : rule === 'DL-72H' ? { borderColor: 'var(--high)' } : undefined}>
+      <Timer size={11} />{txt} · by {new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
+    </span>
   )
 }
 
@@ -67,8 +65,8 @@ export function Card({ title, sub, right, children, className = '', onClick }: {
     <section className={`card ${onClick ? 'clickable' : ''} ${className}`} onClick={onClick}>
       {(title || right) && (
         <div className="card-h">
-          {title && <h3>{gloss(title)}</h3>}
-          {sub && <span className="sub">{gloss(sub)}</span>}
+          {title && <h3>{title}</h3>}
+          {sub && <span className="sub">{sub}</span>}
           {right && <div className="right">{right}</div>}
         </div>
       )}
@@ -80,9 +78,9 @@ export function Card({ title, sub, right, children, className = '', onClick }: {
 export function Stat({ label, value, hint, hero, onClick }: { label: string; value: ReactNode; hint?: ReactNode; hero?: boolean; onClick?: () => void }) {
   return (
     <div className={`card stat ${hero ? 'hero' : ''} ${onClick ? 'clickable' : ''}`} onClick={onClick}>
-      <span className="label">{gloss(label)}</span>
+      <span className="label">{label}</span>
       <span className="value">{value}</span>
-      {hint && <span className="hint">{gloss(hint)}</span>}
+      {hint && <span className="hint">{hint}</span>}
     </div>
   )
 }
@@ -115,7 +113,7 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
     <div className="tabs" role="tablist">
       {tabs.map(t => (
         <button key={t.id} role="tab" aria-selected={value === t.id} className={value === t.id ? 'on' : ''} onClick={() => onChange(t.id)}>
-          {gloss(t.label)}{t.count !== undefined && <span className="pill" style={{ padding: '0 6px' }}>{t.count}</span>}
+          {t.label}{t.count !== undefined && <span className="pill" style={{ padding: '0 6px' }}>{t.count}</span>}
         </button>
       ))}
     </div>
@@ -157,7 +155,7 @@ export function Table<T>({ rows, cols, onRow, initialSort, max = 500, empty }: {
           <tr>
             {cols.map(c => (
               <th key={c.key} className={c.num ? 'num' : ''} style={{ width: c.width }} onClick={() => setSort(s => [c.key, s && s[0] === c.key && s[1] === 'desc' ? 'asc' : 'desc'])}>
-                {gloss(c.label)}{sort && sort[0] === c.key && (sort[1] === 'desc' ? <ChevronDown size={11} /> : <ChevronUp size={11} />)}
+                {c.label}{sort && sort[0] === c.key && (sort[1] === 'desc' ? <ChevronDown size={11} /> : <ChevronUp size={11} />)}
               </th>
             ))}
           </tr>
@@ -165,13 +163,75 @@ export function Table<T>({ rows, cols, onRow, initialSort, max = 500, empty }: {
         <tbody>
           {sorted.slice(0, max).map((r, i) => (
             <tr key={i} className={onRow ? 'click' : ''} onClick={() => onRow?.(r)}>
-              {cols.map(c => <td key={c.key} className={c.num ? 'num' : ''}>{c.render ? c.render(r) : gloss((r as any)[c.key])}</td>)}
+              {cols.map(c => <td key={c.key} className={c.num ? 'num' : ''}>{c.render ? c.render(r) : (r as any)[c.key]}</td>)}
             </tr>
           ))}
         </tbody>
       </table>
       {sorted.length > max && <div className="muted" style={{ padding: 8, fontSize: 12 }}>Showing {max} of {sorted.length}.</div>}
     </div>
+  )
+}
+
+const CONF_TIP: Record<string, string> = {
+  confirmed: 'Confirmed: observed directly (DNS / RDAP / certificate record, CVE on an owned host, domain/CIK/LEI match, SEC filing).',
+  likely: 'Likely: exact name or domain match in a third-party dataset, product seen without version, or DNS-evidenced provider.',
+  unconfirmed: 'Unconfirmed: text mention, hostname-inferred product or forum claim — never rated above High.',
+}
+/** Confidence of the evidence behind a finding or action — always shown in words next to the level. */
+export function Confidence({ c }: { c?: string | null }) {
+  if (!c) return null
+  return <span className="pill" title={CONF_TIP[c]} style={{ fontSize: 11 }}>{c}</span>
+}
+
+/* ---- the common page shape: summarise (StoryStrip) → visualise → details (SectionLabel) → sources (PageSources) ---- */
+
+/** The page's story in 3–4 numbers, each with one sentence; click to jump to its detail. */
+export function StoryStrip({ items }: { items: { label: string; value: ReactNode; title: ReactNode; sub?: ReactNode; onClick?: () => void }[] }) {
+  return (
+    <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 14 }}>
+      {items.map((c, i) => (
+        <div key={i} className={`card ${c.onClick ? 'clickable' : ''}`} onClick={c.onClick} role={c.onClick ? 'button' : undefined} tabIndex={c.onClick ? 0 : undefined}
+          onKeyDown={e => { if (c.onClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); c.onClick() } }}>
+          <div className="muted" style={{ fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.06em' }}>{c.label}</div>
+          <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.15, margin: '6px 0 2px' }}>{c.value}</div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{c.title}</div>
+          {c.sub && <div className="muted clamp2" style={{ fontSize: 12, marginTop: 4 }}>{c.sub}</div>}
+        </div>))}
+    </div>
+  )
+}
+
+/** Divider between the summary, the details and the sources of a page. */
+export function SectionLabel({ children }: { children: ReactNode }) {
+  return <div className="eyebrow" style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '22px 0 10px' }}>{children}<span style={{ flex: 1, height: 1, background: 'var(--hair)' }} /></div>
+}
+
+const SRC_STATE: Record<string, string> = { OK: 'live', EMPTY: 'no new data', DEGRADED: 'degraded', DISABLED: 'disabled', RUNNING: 'collecting', PENDING: 'queued' }
+/** Footer: which sources feed this page, with live status now. `cats` = source categories (all when omitted). */
+export function PageSources({ cats, note }: { cats?: string[]; note?: ReactNode }) {
+  const { data } = useApi<any>('/sources', 300)
+  const nav = useNavigate()
+  if (!data) return null
+  const rows = (data.sources as any[]).filter(s => !cats || cats.includes(s.category))
+  const live = rows.filter(s => s.status === 'OK').length
+  const bad = rows.filter(s => s.status === 'DEGRADED').length
+  return (
+    <>
+      <SectionLabel>Sources</SectionLabel>
+      <Card title="Where this page's data comes from" sub={`${rows.length} passive, free and open sources · ${live} live${bad ? ` · ${bad} degraded` : ''} · status now · hover for details`}
+        right={<a className="srclink" onClick={() => nav('/sources')}>All sources & method →</a>}>
+        <div className="row wrap" style={{ gap: 6 }}>
+          {rows.map(s => (
+            <a key={s.id} className="pill btn" href={s.homepage} target="_blank" rel="noopener noreferrer"
+              title={`${s.publisher || s.name} · ${SRC_STATE[s.status] || s.status}${s.last_ok ? ` · last success ${ago(s.last_ok)}` : ''}${s.notes ? ` — ${s.notes}` : ''}`}>
+              <span aria-hidden style={{ width: 7, height: 7, borderRadius: 999, background: s.status === 'OK' ? 'var(--good)' : s.status === 'DEGRADED' ? 'var(--high)' : 'var(--muted)' }} />
+              {s.name}{s.status !== 'OK' && <span className="muted"> · {SRC_STATE[s.status] || s.status}</span>}
+            </a>))}
+        </div>
+        {note && <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>{note}</div>}
+      </Card>
+    </>
   )
 }
 

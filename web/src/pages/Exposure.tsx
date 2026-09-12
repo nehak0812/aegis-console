@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ResponsiveHeatMap } from '@nivo/heatmap'
 import { useApi } from '../lib/api'
-import { Gloss } from '../lib/glossary'
 import { useRange } from '../App'
+import { PageSources } from '../components/ui'
 import { Card, Stat, Sev, Table, Empty, SourceLink, Tabs, Legend } from '../components/ui'
 import { HBar, Columns } from '../components/charts'
 import { SEV_COLOR, nivoTheme, SERIES, EMPTY, SURFACE } from '../lib/chartTheme'
@@ -20,8 +20,17 @@ function CveCard({ cve }: { cve: string }) {
     <Card title={cve} sub={`${data.vendor || ''} ${data.product || ''}`} right={<SourceLink url={`https://nvd.nist.gov/vuln/detail/${cve}`} label="NVD" />}>
       <div className="row wrap" style={{ gap: 8, marginBottom: 8 }}><Sev level={data.severity} rule={data.severity_rule} /><span className="pill">EPSS {pct(data.epss)}</span>{data.kev_added && <span className="pill">KEV since {data.kev_added}</span>}{data.cvss && <span className="pill">CVSS {data.cvss}</span>}</div>
       <div className="ink2" style={{ marginBottom: 8 }}>{data.description}</div>
-      <div className="muted" style={{ fontSize: 12 }}>Monitored organisations with this CVE on an indexed host:</div>
-      <div className="row wrap" style={{ gap: 6, marginTop: 6 }}>{data.exposed.length ? data.exposed.map((e: any) => <span key={e.ip} className="pill btn" onClick={() => nav(`/orgs/${e.org_id}`)}>{e.org_id} · {e.ip}</span>) : <span className="muted">none</span>}</div>
+      <div className="row wrap" style={{ gap: 8, marginBottom: 8, alignItems: 'center' }}>
+        <span className="pill" title="from the CVE record's tagged references, fixed versions, or the vendor advisories CISA cites">Vendor fix: {data.fix_label}</span>
+        {(data.fix?.urls || []).slice(0, 3).map((u: any) => <SourceLink key={u.url} url={u.url} label={(u.tags || []).join(', ') || 'advisory'} />)}
+        {!!data.fix?.fixed_versions?.length && <span className="muted" style={{ fontSize: 12 }} title="affected ranges from the CVE record — the fix is at each upper bound">affected: {data.fix.fixed_versions.join('; ')}</span>}
+        {data.kev_action && <span className="muted" style={{ fontSize: 12 }} title="CISA KEV required action">CISA: {data.kev_action}</span>}
+      </div>
+      <div className="muted" style={{ fontSize: 12 }}>Still exposed — reported on the organisation's own host now:</div>
+      <div className="row wrap" style={{ gap: 6, marginTop: 6 }}>{data.uptake?.still?.length ? data.uptake.still.map((e: any) => <span key={e.org_id} className="pill btn" onClick={() => nav(`/orgs/${e.org_id}?tab=prevent`)}>{e.name} · since {day(e.first_seen)}</span>)
+        : data.exposed.length ? data.exposed.map((e: any) => <span key={e.ip} className="pill btn" onClick={() => nav(`/orgs/${e.org_id}`)}>{e.org_id} · {e.ip}</span>) : <span className="muted">none</span>}</div>
+      <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>Fix observed — no longer reported on a later scan (patched or host removed):</div>
+      <div className="row wrap" style={{ gap: 6, marginTop: 6 }}>{data.uptake?.fixed?.length ? data.uptake.fixed.map((e: any) => <span key={e.org_id} className="pill btn" onClick={() => nav(`/orgs/${e.org_id}`)}>{e.name} · {day(e.fixed_at)}</span>) : <span className="muted">none yet</span>}</div>
     </Card>
   )
 }
@@ -30,10 +39,10 @@ export default function Exposure() {
   const { range } = useRange()
   const nav = useNavigate()
   const [sp] = useSearchParams()
-  const [tab, setTab] = useState<'exploited' | 'watchlist' | 'compromised'>('exploited')
+  const [tab, setTab] = useState<'exploited' | 'watchlist' | 'compromised'>(sp.get('category') ? 'watchlist' : 'exploited')
   const [vendor, setVendor] = useState('')
-  const [category, setCategory] = useState('')
-  const { data } = useApi<any>(`/exposure?days=${range}${category ? `&category=${category}` : ''}`, 300)
+  const [rankBy, setRankBy] = useState(sp.get('category') || '')
+  const { data } = useApi<any>(`/exposure?days=${range}${rankBy ? `&category=${rankBy}` : ''}`, 300)
   const VCOL = [EMPTY, SEV_COLOR.low, SEV_COLOR.medium, SEV_COLOR.high, SEV_COLOR.critical]
   if (!data) return <div className="muted">Loading exposure…</div>
   const cve = sp.get('cve')
@@ -46,12 +55,12 @@ export default function Exposure() {
         <div>
           <div className="eyebrow">Exposure & vulnerabilities</div>
           <h2>Exploited software, exposed services and compromised hosts</h2>
-          <p><Gloss>CISA KEV, FIRST EPSS, public exploit availability and CVE records set each vulnerability's level by rule. Exposure across the monitored organisations comes from passive indexes only.</Gloss></p>
+          <p>CISA KEV, FIRST EPSS, public exploit availability and CVE records set each vulnerability's level by rule. Exposure across the monitored organisations comes from passive indexes only.</p>
         </div>
       </div>
       {cve && <div style={{ marginBottom: 14 }}><CveCard cve={cve} /></div>}
       <div className="grid g4" style={{ marginBottom: 14 }}>
-        <Stat label="Actively exploited CVEs (KEV)" value={compact(data.kev_total)} hint={`${data.severity.critical || 0} Critical by rule`} />
+        <Stat label="Actively exploited CVEs (KEV) · all time" value={compact(data.kev_total)} hint={`${data.severity.critical || 0} Critical by rule`} />
         <Stat label={`Added in the last ${range} days`} value={data.kev_recent.length} hint="fresh exploitation" />
         <Stat label="Used in ransomware" value={data.ransomware_linked} hint="CISA 'known ransomware use'" />
         <Stat label="Organisations surface-scanned" value={data.scanned_orgs} hint="rolling passive scan" />
@@ -70,10 +79,11 @@ export default function Exposure() {
           </div>
           <Card title={`Recently exploited${vendor ? ` — ${vendor}` : ''}`} sub="level assigned by rule; hover the level for the reason">
             <Table rows={recent} empty="No KEV additions in this window." cols={[
-              { key: 'cve', label: 'CVE', render: (v: any) => <SourceLink url={`https://nvd.nist.gov/vuln/detail/${v.cve}`} label={v.cve} /> },
+              { key: 'cve', label: 'CVE', render: (v: any) => <a className="clickable" title="open the CVE card: exposed organisations, EPSS, KEV dates" onClick={e => { e.stopPropagation(); nav(`/exposure?cve=${v.cve}`); window.scrollTo({ top: 0, behavior: 'smooth' }) }}>{v.cve}</a> },
               { key: 'severity', label: 'Level', render: (v: any) => <Sev level={v.severity} rule={v.severity_rule} />, sort: (v: any) => RANKV[v.severity] },
               { key: 'vendor', label: 'Product', render: (v: any) => <><b>{v.vendor}</b> {v.product}<div className="muted" style={{ fontSize: 12 }}>{v.name}</div></> },
               { key: 'kev_added', label: 'Added', render: (v: any) => day(v.kev_added) },
+              { key: 'lag', label: 'Time to exploit', render: (v: any) => (v.lag == null ? <span className="muted">—</span> : <span className="pill" title="CVE publication → CISA KEV addition">{v.lag <= 0 ? 'zero-day' : `${v.lag}d`}</span>), sort: (v: any) => v.lag ?? 99999 },
               { key: 'epss', label: 'EPSS', num: true, render: (v: any) => pct(v.epss) },
               { key: 'ransomware', label: 'Ransomware', render: (v: any) => v.ransomware === 'Known' ? <span className="pill">Known</span> : '' },
               { key: 'exploit_refs', label: 'Public exploit', render: (v: any) => (v.exploit_refs || []).slice(0, 2).map((r: any) => <div key={r.url}><SourceLink url={r.url} label={r.src} /></div>), sort: (v: any) => (v.exploit_refs || []).length },
@@ -81,7 +91,7 @@ export default function Exposure() {
           </Card>
           <Card title="Highest exploit probability" sub="FIRST EPSS — probability of exploitation in the next 30 days">
             <Table rows={data.top_epss} max={60} cols={[
-              { key: 'cve', label: 'CVE', render: (v: any) => <SourceLink url={`https://nvd.nist.gov/vuln/detail/${v.cve}`} label={v.cve} /> },
+              { key: 'cve', label: 'CVE', render: (v: any) => <a className="clickable" title="open the CVE card: exposed organisations, EPSS, KEV dates" onClick={e => { e.stopPropagation(); nav(`/exposure?cve=${v.cve}`); window.scrollTo({ top: 0, behavior: 'smooth' }) }}>{v.cve}</a> },
               { key: 'severity', label: 'Level', render: (v: any) => <Sev level={v.severity} rule={v.severity_rule} /> },
               { key: 'vendor', label: 'Product', render: (v: any) => `${v.vendor || ''} ${v.product || ''}` },
               { key: 'epss', label: 'EPSS', num: true, render: (v: any) => pct(v.epss) }, { key: 'kev_added', label: 'In KEV', render: (v: any) => v.kev_added ? 'yes' : '' }]} />
@@ -91,7 +101,10 @@ export default function Exposure() {
 
       {tab === 'watchlist' && (
         <div className="stack" style={{ gap: 14 }}>
-          <Card title="Exposure matrix" sub="most exposed organisations × assessment category · cell = worst level · click a row to open">
+          <Card title="Exposure matrix" sub={rankBy ? `30 organisations ranked by “${(data.matrix.categories.find((c: any) => c[0] === rankBy) || [])[1]}” first · cell = worst level · click to open` : 'most exposed organisations × assessment category · cell = worst level · click a row to open'}
+            right={<select className="txt" aria-label="Rank organisations by category" value={rankBy} onChange={e => setRankBy(e.target.value)}>
+              <option value="">Rank: most exposed overall</option>
+              {data.matrix.categories.map(([k, l]: any) => <option key={k} value={k}>Rank by: {l} ({data.matrix.with_category?.[k] || 0} orgs)</option>)}</select>}>
             {heat.length ? (
               <>
                 <div style={{ height: Math.max(260, heat.length * 26 + 110) }}>
@@ -102,7 +115,7 @@ export default function Exposure() {
                     onClick={(cell: any) => { const r = heat.find((h: any) => h.id === cell.serieId); if (r) nav(`/orgs/${r.oid}`) }}
                     tooltip={({ cell }: any) => <div className="tip"><strong>{cell.serieId}</strong><div>{cell.data.x}: {VLBL[cell.value || 0]}</div></div>} />
                 </div>
-                <Legend items={[4, 3, 2, 1].map(v => ({ label: VLBL[v], color: VCOL[v] }))} />
+                <Legend items={[...[4, 3, 2, 1].map(v => ({ label: VLBL[v], color: VCOL[v] })), { label: 'No finding in this category', color: EMPTY }]} />
               </>) : <Empty>Findings appear once the first scans complete.</Empty>}
           </Card>
           <div className="grid g3">
@@ -141,6 +154,7 @@ export default function Exposure() {
           </Card>
         </div>
       )}
+      <PageSources cats={['Vulnerabilities', 'Attack surface']} />
     </div>
   )
 }

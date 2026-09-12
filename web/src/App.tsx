@@ -1,6 +1,8 @@
 import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState } from 'react'
-import { Link, NavLink, Route, Routes, useNavigate, useLocation } from 'react-router-dom'
-import { Radar, Flame, Building2, ShieldAlert, Skull, Crosshair, Brain, Database, Search, Cpu, Activity, Moon, CloudMoon, Sun , Menu, X } from 'lucide-react'
+import { NavLink, Route, Routes, useNavigate, useLocation } from 'react-router-dom'
+import { Radar, Flame, Building2, ShieldAlert, Skull, Crosshair, Brain, Database, Search, Cpu, Activity, Moon, CloudMoon, Sun, Fingerprint, Timer, ShieldCheck, Workflow, Menu } from 'lucide-react'
+import { ChainNav } from './components/chain'
+import { GlossaryLayer } from './components/glossary'
 import { useApi } from './lib/api'
 import { ago } from './lib/format'
 import { Seg } from './components/ui'
@@ -30,21 +32,17 @@ const Adversaries = lazy(() => import('./pages/Adversaries'))
 const Analyst = lazy(() => import('./pages/Analyst'))
 const AIRisk = lazy(() => import('./pages/AIRisk'))
 const Sources = lazy(() => import('./pages/Sources'))
+const Impersonation = lazy(() => import('./pages/Impersonation'))
+const Speed = lazy(() => import('./pages/Speed'))
+const Prevent = lazy(() => import('./pages/Prevent'))
+const Suppliers = lazy(() => import('./pages/Suppliers'))
 
 function NotFound() {
   return (
-    <div className="page-head">
-      <div>
-        <div className="eyebrow">Not found</div>
-        <h2>That page does not exist</h2>
-        <p>The address may be mistyped, or the page may have moved. Everything the console offers is in the navigation.</p>
-        <div className="row wrap" style={{ gap: 8, marginTop: 12 }}>
-          <Link className="btn" to="/">Situation</Link>
-          <Link className="btn" to="/orgs">Organisations</Link>
-          <Link className="btn" to="/incidents">Incidents &amp; impact</Link>
-          <Link className="btn" to="/sources">Sources &amp; method</Link>
-        </div>
-      </div>
+    <div className="card" style={{ maxWidth: 560 }}>
+      <h3 style={{ marginTop: 0 }}>Page not found</h3>
+      <p className="muted">This view does not exist in this version of the console.</p>
+      <div className="row" style={{ gap: 12 }}><NavLink to="/">Situation</NavLink><NavLink to="/orgs">Organisations</NavLink><NavLink to="/sources">Sources & method</NavLink></div>
     </div>
   )
 }
@@ -69,7 +67,7 @@ function GlobalSearch() {
   return (
     <div className="search">
       <Search size={15} />
-      <input ref={ref} value={q} placeholder="Search organisations, incidents, vulnerabilities (CVEs), actors…  ( / )" onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
+      <input ref={ref} value={q} placeholder="Search organisations, incidents, CVEs, actors, vendors…  ( / )" onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
         onChange={e => { setQ(e.target.value); setSel(0); setOpen(true) }}
         onKeyDown={e => { if (e.key === 'ArrowDown') setSel(s => Math.min(s + 1, results.length - 1)); if (e.key === 'ArrowUp') setSel(s => Math.max(0, s - 1)); if (e.key === 'Enter' && results[sel]) go(results[sel]) }} />
       {open && results.length > 0 && (
@@ -103,61 +101,61 @@ export default function App() {
   const [theme, setThemeState] = useState<ThemeName>(THEME)
   const changeTheme = (t: ThemeName) => { applyTheme(t); setThemeState(t) }
   const { data: counts } = useApi<any>('/nav-counts', 60)
-  const version = useApi<any>('/health', 600).data?.version || ''
+  const { data: st } = useApi<any>('/status', 20)
   const loc = useLocation()
-  // the rail becomes an off-canvas drawer on small screens; it closes on navigation and on Escape
-  const [navOpen, setNavOpen] = useState(false)
-  useEffect(() => { document.querySelector('.page')?.scrollTo(0, 0); setNavOpen(false) }, [loc.pathname])
-  useEffect(() => {
-    if (!navOpen) return
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setNavOpen(false) }
-    document.addEventListener('keydown', esc)
-    return () => document.removeEventListener('keydown', esc)
-  }, [navOpen])
-  const N = (to: string, icon: any, label: string, count?: number, hot?: boolean) => {
+  const [menu, setMenu] = useState(false)  // phone / narrow screens: the navigation slides in
+  useEffect(() => { document.querySelector('.page')?.scrollTo(0, 0); setMenu(false) }, [loc.pathname])
+  // nav badges use fixed windows (not the range selector) — the tooltip says which
+  const N = (to: string, icon: any, label: string, count?: number, hot?: boolean, hint?: string) => {
     const I = icon
-    return <NavLink to={to} end={to === '/'} className={({ isActive }) => (isActive ? 'active' : '')}><I size={16} />{label}{count !== undefined && <span className={`count ${hot ? 'hot' : ''}`}>{count}</span>}</NavLink>
+    return <NavLink to={to} end={to === '/'} className={({ isActive }) => (isActive ? 'active' : '')}><I size={16} />{label}{count !== undefined && <span className={`count ${hot ? 'hot' : ''}`} title={hint}>{count}</span>}</NavLink>
   }
   return (
     <RangeCtx.Provider value={{ range, setRange }}>
-      <div className={`shell${navOpen ? ' nav-open' : ''}`}>
-        <div className="nav-backdrop" onClick={() => setNavOpen(false)} aria-hidden="true" />
-        <aside className="rail" id="aegis-nav">
+      <div className="shell">
+        <div className={`scrim ${menu ? 'open' : ''}`} onClick={() => setMenu(false)} aria-hidden />
+        <aside className={`rail ${menu ? 'open' : ''}`}>
           <div className="brand">
             <div className="brand-mark"><Radar size={20} style={{ color: 'var(--accent)' }} /></div>
             <div><h1>AEGIS</h1><small>Cyber Risk Operations Center</small></div>
           </div>
+          {/* ordered as the risk chain: the threat → the exposure → the response (see components/chain.tsx) */}
           <nav className="nav">
-            <div className="nav-sec">Watch floor</div>
             {N('/', Activity, 'Situation')}
-            {N('/incidents', Flame, 'Incidents & impact', counts?.incidents_critical, (counts?.incidents_critical || 0) > 0)}
-            {N('/orgs', Building2, 'Organisations', counts?.orgs_watch)}
-            <div className="nav-sec">Threat picture</div>
-            {N('/exposure', ShieldAlert, 'Exposure & vulns', counts?.kev_7d)}
-            {N('/darkweb', Skull, 'Dark web & chatter', counts?.leaks_7d)}
+            <div className="nav-sec">The threat</div>
+            {N('/incidents', Flame, 'Incidents & impact', counts?.incidents_critical, (counts?.incidents_critical || 0) > 0, 'Critical incidents · last 7 days')}
+            {N('/speed', Timer, 'Speed & spread')}
             {N('/adversaries', Crosshair, 'Adversaries')}
-            <div className="nav-sec">Intelligence</div>
+            {N('/darkweb', Skull, 'Dark web & chatter', counts?.leaks_7d, false, 'leak-site listings · last 7 days')}
             {N('/analyst', Brain, 'Analyst view')}
+            <div className="nav-sec">The exposure</div>
+            {N('/exposure', ShieldAlert, 'Exposure & vulns', counts?.kev_7d, false, 'CVEs newly exploited (CISA KEV) · last 7 days')}
+            {N('/impersonation', Fingerprint, 'Impersonation & IOCs', counts?.impersonation, (counts?.impersonation || 0) > 0, 'Critical / High impersonation findings · now')}
+            {N('/suppliers', Workflow, 'Supply chain')}
             {N('/ai', Cpu, 'AI risk')}
+            <div className="nav-sec">The response</div>
+            {N('/orgs', Building2, 'Organisations', counts?.orgs_watch, false, 'monitored organisations · now')}
+            {N('/prevent', ShieldCheck, 'Prevent & actions')}
+            <div className="nav-sec">Method</div>
             {N('/sources', Database, 'Sources & method')}
           </nav>
           <div className="rail-foot">
             Passive, open sources only. No scanning, no purchased data, credentials never stored.
-            <div style={{ marginTop: 6, opacity: .75 }}>AEGIS <span className="mono">{version}</span></div>
+            {st?.version && <div className="mono" style={{ marginTop: 6 }}>AEGIS {st.version}</div>}
           </div>
         </aside>
         <div className="main">
           <header className="topbar">
-            <button className="nav-toggle" aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
-              aria-expanded={navOpen} aria-controls="aegis-nav" onClick={() => setNavOpen(o => !o)}>
-              {navOpen ? <X size={18} /> : <Menu size={18} />}
-            </button>
+            <button className="menu-btn" aria-label="Open navigation" onClick={() => setMenu(m => !m)}><Menu size={18} /></button>
             <GlobalSearch />
-            <Seg options={[{ id: '7', label: '7d' }, { id: '30', label: '30d' }, { id: '90', label: '90d' }]} value={range} onChange={setRange} />
-            <LiveStatus />
+            <span title="Time window for incidents, reporting, dark-web activity, exploitation and speed. Each tile says which window it uses: “· 7d / 30d / 90d” follows this selector, “· now” is the current state (levels, findings, act-by deadlines), and a few context charts use a fixed period stated in their subtitle. AEGIS has only collected since it was deployed, so longer windows can match shorter ones.">
+              <Seg options={[{ id: '7', label: '7d' }, { id: '30', label: '30d' }, { id: '90', label: '90d' }]} value={range} onChange={setRange} />
+            </span>
+            <span className="hide-sm"><LiveStatus /></span>
             <ThemeSwitch value={theme} onChange={changeTheme} />
           </header>
           <main className="page">
+            <ChainNav where="top" />
             <Suspense fallback={<div className="muted">Loading…</div>}>
               {/* keyed on theme: charts remount and read the new colour tokens */}
               <Routes key={theme}>
@@ -173,10 +171,16 @@ export default function App() {
                 <Route path="/analyst" element={<Analyst />} />
                 <Route path="/ai" element={<AIRisk />} />
                 <Route path="/sources" element={<Sources />} />
+                <Route path="/impersonation" element={<Impersonation />} />
+                <Route path="/speed" element={<Speed />} />
+                <Route path="/prevent" element={<Prevent />} />
+                <Route path="/suppliers" element={<Suppliers />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
+            <ChainNav where="bottom" />
           </main>
+          <GlossaryLayer />
         </div>
       </div>
     </RangeCtx.Provider>
