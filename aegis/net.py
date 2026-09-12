@@ -1,4 +1,5 @@
 """Passive HTTP client: allow-list enforced, polite User-Agent, retries, and an on-disk cache for bulk files."""
+import contextvars
 import gzip
 import hashlib
 import json
@@ -11,6 +12,27 @@ import httpx
 
 from aegis import CACHE_DIR
 from aegis.guard import check_url
+
+# the host a collector asked for; redirect hops may stay on that site even when the exact host is not listed
+_origin: contextvars.ContextVar[str | None] = contextvars.ContextVar("aegis_origin", default=None)
+
+
+def _site(host: str) -> str:
+    parts = (host or "").lower().rstrip(".").split(".")
+    if len(parts) >= 3 and parts[-2] in ("co", "com", "gov", "ac", "org", "net") and len(parts[-1]) == 2:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
+def _redirect_guard(request: httpx.Request) -> None:
+    """Every outbound request — including each redirect hop — must be allow-listed, or stay on the same site as the URL
+    the collector asked for. Without this, follow_redirects could reach a host the allow-list never approved."""
+    try:
+        check_url(str(request.url))
+    except Exception:
+        origin = _origin.get()
+        if not origin or _site(request.url.host) != _site(origin):
+            raise
 
 CONTACT = os.environ.get("AEGIS_CONTACT", "aegis-console@localhost.localdomain")
 UA = f"AEGIS-Console/2.0 (open-source cyber risk research; {CONTACT})"
@@ -33,7 +55,8 @@ def client() -> httpx.Client:
         if _client is None:
             _client = httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=True,
                                    headers={"User-Agent": UA, "Accept-Encoding": "gzip, deflate"},
-                                   limits=httpx.Limits(max_connections=20, max_keepalive_connections=10))
+                                   limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                                   event_hooks={"request": [_redirect_guard]})
         return _client
 
 
@@ -54,21 +77,25 @@ def get(url: str, *, params: dict | None = None, headers: dict | None = None, ti
     check_url(url)
     host = httpx.URL(url).host
     err: Exception | None = None
-    for attempt in range(retries + 1):
-        _pace(host)
-        try:
-            r = client().get(url, params=params, headers=headers, timeout=timeout or 30.0)
-            if r.status_code == 404 and ok_404:
-                return None
-            if r.status_code in (429, 502, 503, 504) and attempt < retries:
-                time.sleep(2 * (attempt + 1))
-                continue
-            r.raise_for_status()
-            return r
-        except (httpx.HTTPError,) as e:
-            err = e
-            if attempt < retries:
-                time.sleep(1.5 * (attempt + 1))
+    tok = _origin.set(host)
+    try:
+        for attempt in range(retries + 1):
+            _pace(host)
+            try:
+                r = client().get(url, params=params, headers=headers, timeout=timeout or 30.0)
+                if r.status_code == 404 and ok_404:
+                    return None
+                if r.status_code in (429, 502, 503, 504) and attempt < retries:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                return r
+            except (httpx.HTTPError,) as e:
+                err = e
+                if attempt < retries:
+                    time.sleep(1.5 * (attempt + 1))
+    finally:
+        _origin.reset(tok)
     raise err  # type: ignore[misc]
 
 
@@ -77,7 +104,11 @@ def post(url: str, *, data: dict | None = None, json_body: Any = None, headers: 
     """POST only for query endpoints of public data services (Wikidata SPARQL, USAspending) — never to monitored orgs."""
     check_url(url)
     _pace(httpx.URL(url).host)
-    r = client().post(url, data=data, json=json_body, headers=headers, timeout=timeout)
+    tok = _origin.set(httpx.URL(url).host)
+    try:
+        r = client().post(url, data=data, json=json_body, headers=headers, timeout=timeout)
+    finally:
+        _origin.reset(tok)
     r.raise_for_status()
     return r
 

@@ -39,54 +39,6 @@ def reg_domain(host: str) -> str:
     return ".".join(parts[-2:]) if len(parts) >= 2 else h
 
 
-# ISO-3166 alpha-2 → display name, mirroring COUNTRY in web/src/lib/format.ts.
-COUNTRY_NAME = {
-    "US": "United States", "GB": "United Kingdom", "DE": "Germany", "FR": "France", "NL": "Netherlands", "CH": "Switzerland",
-    "ES": "Spain", "IT": "Italy", "IE": "Ireland", "SE": "Sweden", "NO": "Norway", "DK": "Denmark", "FI": "Finland",
-    "BE": "Belgium", "AT": "Austria", "CA": "Canada", "AU": "Australia", "JP": "Japan", "IN": "India", "BR": "Brazil",
-    "MX": "Mexico", "LU": "Luxembourg", "PT": "Portugal", "PL": "Poland", "CN": "China", "KR": "South Korea",
-    "SG": "Singapore", "IL": "Israel", "AE": "UAE", "SA": "Saudi Arabia", "ZA": "South Africa", "TW": "Taiwan",
-    "HK": "Hong Kong", "RU": "Russia", "IR": "Iran", "KP": "North Korea", "UA": "Ukraine", "TR": "Turkey",
-    "AR": "Argentina", "CO": "Colombia", "CL": "Chile", "NZ": "New Zealand", "VN": "Vietnam", "PS": "Palestine",
-    "LB": "Lebanon", "SY": "Syria", "PK": "Pakistan", "KZ": "Kazakhstan", "BY": "Belarus", "VE": "Venezuela",
-    "EG": "Egypt", "GE": "Georgia", "CZ": "Czechia", "GR": "Greece", "RO": "Romania", "HU": "Hungary", "SK": "Slovakia",
-    "TH": "Thailand", "MY": "Malaysia", "ID": "Indonesia", "PH": "Philippines", "NG": "Nigeria", "KE": "Kenya",
-    "MA": "Morocco", "PE": "Peru", "QA": "Qatar", "KW": "Kuwait", "BH": "Bahrain", "OM": "Oman", "JO": "Jordan",
-    "IQ": "Iraq", "LK": "Sri Lanka", "BD": "Bangladesh", "NP": "Nepal", "HR": "Croatia", "RS": "Serbia", "BG": "Bulgaria",
-    "SI": "Slovenia", "EE": "Estonia", "LV": "Latvia", "LT": "Lithuania", "IS": "Iceland", "CY": "Cyprus", "MT": "Malta",
-    "DO": "Dominican Republic", "PR": "Puerto Rico", "EC": "Ecuador", "UY": "Uruguay", "CR": "Costa Rica", "PA": "Panama",
-}
-_BY_NAME = {n.lower(): a for a, n in COUNTRY_NAME.items()}
-_BY_NAME.update({
-    "usa": "US", "u.s.": "US", "u.s.a.": "US", "united states of america": "US", "america": "US",
-    "uk": "GB", "u.k.": "GB", "britain": "GB", "great britain": "GB", "england": "GB", "scotland": "GB", "wales": "GB",
-    "united arab emirates": "AE", "emirates": "AE", "korea": "KR", "republic of korea": "KR", "dprk": "KP",
-    "russian federation": "RU", "czech republic": "CZ", "holland": "NL", "the netherlands": "NL",
-    "turkiye": "TR", "türkiye": "TR", "viet nam": "VN", "saudi": "SA", "kingdom of saudi arabia": "SA",
-    "people's republic of china": "CN", "prc": "CN", "hong kong sar": "HK", "deutschland": "DE", "espana": "ES",
-    "españa": "ES", "nippon": "JP", "bharat": "IN",
-})
-
-
-def country_code(raw):
-    """Resolve free text to an ISO-3166 alpha-2 code.
-
-    Returns (code, error). Truncating to two characters is not safe — 'Germany'
-    would become 'GE', which is Georgia — so anything longer must resolve by name.
-    """
-    c = (raw or "").strip()
-    if not c:
-        return None, None
-    # names and aliases first: 'UK' is a two-letter alias, but the ISO code is GB
-    hit = _BY_NAME.get(c.lower())
-    if hit:
-        return hit, None
-    # pass through any other well-formed code, since the table above is not exhaustive
-    if len(c) == 2 and c.isalpha():
-        return c.upper(), None
-    return None, f"Country {c!r} was not recognised. Use an ISO-2 code such as IN, or a country name such as India."
-
-
 class Matcher:
     def __init__(self):
         self._lock = threading.Lock()

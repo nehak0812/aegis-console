@@ -33,6 +33,8 @@ re-collects from scratch (the console fills within ~10–20 minutes).
 | `AEGIS_PASSWORD` | **Strongly recommended** | Protects the console with a browser sign-in (user `aegis`). Without it anyone with the URL can use the console and trigger scans. |
 | `AEGIS_USER` | optional | Change the sign-in user name (default `aegis`). |
 | `AEGIS_CONTACT` | recommended | An email address for the polite User-Agent that SEC EDGAR, Wikidata and RIPEstat ask API users to send, e.g. `security-team@yourcompany.com`. |
+| `AEGIS_VERSION` | optional | Version label shown in the console footer and `/api/health` (e.g. `2.2.0`). |
+| `GITHUB_TOKEN` | optional | A fine-grained GitHub token with **no repository permissions**. Lifts GitHub's 60-calls/hour anonymous limit for the vendor IOC repositories, malware advisories and offensive-AI metadata (v2.2). Without it those sources may show Degraded now and then. |
 | `AEGIS_DATA_DIR` | no | Already `/data` in the image. |
 | `PORT` | no | Injected by Railway automatically. |
 

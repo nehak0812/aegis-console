@@ -1,116 +1,175 @@
-"""The action lifecycle — pure functions, no network and no database.
+"""Actions ("Prevent", reconciled with production v2.0.1 + Prevent).
 
-A finding says something is wrong. An action is the record of somebody doing something about
-it: who owns it, by when, what state it is in, and how it ended. The distinction that matters
-is closure. An action is not resolved because a person ticked a box; it is resolved because the
-finding stopped being produced on a later scan, which the platform can prove. Reopening happens
-the same way, without anyone being asked.
-
-There is no sign-in, so "who" is whatever name the console collects at the time. It is recorded
-as an assertion, never as an identity.
+Every Critical, High or Medium finding becomes a tracked action: owner role and playbook, a due date (the finding's act-by date
+from its deadline rule), a status lifecycle with history, and closure the platform proves itself — when the finding is no
+longer observed on a later scan the action is resolved with `verified_closed_at`; if it comes back, it is reopened.
+`false_positive` suppresses the finding; `accepted_risk` suppresses it until its expiry. Table and field names match the
+production deployment so its existing actions and history carry over.
 """
-import os
-from datetime import datetime, timedelta
+import statistics
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 
-OPEN = ("new", "acknowledged", "in_progress")
-TERMINAL = ("resolved", "accepted_risk", "false_positive")
-STATUSES = OPEN + TERMINAL
+from aegis import db
+from aegis.playbooks import OWNERS, playbook
 
-# Reasons are required where the status suppresses a finding that is still true: somebody is
-# choosing to live with it, and that choice needs a name and a rationale attached.
-NEEDS_REASON = ("accepted_risk", "false_positive")
-NEEDS_EXPIRY = ("accepted_risk",)
-
-# Forward through the working states, or out to a terminal state at any point. resolved is
-# reachable by hand, but the platform sets it itself when the finding disappears.
-TRANSITIONS: dict[str, tuple[str, ...]] = {
-    "new": ("acknowledged", "in_progress", "resolved", "accepted_risk", "false_positive"),
-    "acknowledged": ("in_progress", "resolved", "accepted_risk", "false_positive"),
-    "in_progress": ("resolved", "acknowledged", "accepted_risk", "false_positive"),
-    # a terminal state can be reopened by hand, and the pipeline reopens it on its own if the
-    # finding comes back
-    "resolved": ("new", "in_progress"),
-    "accepted_risk": ("new", "in_progress"),
-    "false_positive": ("new",),
+STATUSES = ["new", "acknowledged", "in_progress", "resolved", "accepted_risk", "false_positive"]
+OPEN = {"new", "acknowledged", "in_progress"}
+ALLOWED = {
+    "new": {"acknowledged", "in_progress", "resolved", "accepted_risk", "false_positive"},
+    "acknowledged": {"new", "in_progress", "resolved", "accepted_risk", "false_positive"},
+    "in_progress": {"acknowledged", "resolved", "accepted_risk", "false_positive"},
+    "resolved": {"acknowledged", "in_progress"},
+    "accepted_risk": {"acknowledged", "in_progress"},
+    "false_positive": {"new", "acknowledged"},
 }
-
-# Days to fix, by level. Overridable per deployment: 7 / 30 / 90 is a common default, not a
-# universal truth, and an organisation with a different policy should not have to fork the code.
-SLA_DEFAULT = {"critical": 7, "high": 30, "medium": 90}
+NEEDS_REASON = {"accepted_risk", "false_positive"}
+RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
-def sla_days(level: str) -> int | None:
-    """Days allowed for a level, or None where the level is inventory rather than an action."""
-    if level not in SLA_DEFAULT:
-        return None
-    raw = os.environ.get(f"AEGIS_SLA_{level.upper()}")
-    if raw:
-        try:
-            return max(1, int(raw))
-        except ValueError:
-            pass
-    return SLA_DEFAULT[level]
-
-
-def due_date(level: str, created: str) -> str | None:
-    """When this should be done by, from the level and the day it was raised."""
-    days = sla_days(level)
-    if days is None or not created:
+def _parse(ts: str | None) -> datetime | None:
+    if not ts:
         return None
     try:
-        start = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
     except ValueError:
         return None
-    return (start + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def overdue(due: str | None, status: str, now: str) -> bool:
-    """Only an open action can be overdue; a closed one that ran late is history, not a task."""
-    return bool(due) and status in OPEN and due < now
+def _iso(t: datetime) -> str:
+    return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def actionable(level: str) -> bool:
-    """Low findings are inventory. Raising an action for each would bury the ones that matter."""
-    return level in SLA_DEFAULT
+def _sla_due(f: dict) -> str:
+    from aegis.intel.velocity import SLA_DAYS
+    start = _parse(f.get("first_seen")) or datetime.now(timezone.utc)
+    return _iso(start + timedelta(days=SLA_DAYS.get(f.get("severity"), 90)))
 
 
-def can_transition(current: str, nxt: str) -> bool:
-    return nxt in TRANSITIONS.get(current, ())
+def suppressed(now: str | None = None) -> dict[str, str]:
+    """source_key → kind for findings the analysts marked false positive, or accepted as a risk that has not yet expired."""
+    now = now or db.now()
+    out = {}
+    for r in db.q("SELECT source_key, kind, expires FROM feedback"):
+        if r["kind"] == "false_positive" or (r["kind"] == "accepted_risk" and (r.get("expires") or "") > now):
+            out[r["source_key"]] = r["kind"]
+    return out
 
 
-def validate(current: str, nxt: str, reason: str | None = None, expires: str | None = None) -> str | None:
-    """None if the change is allowed, otherwise why it is not."""
-    if nxt not in STATUSES:
-        return f"{nxt!r} is not a status."
-    if current == nxt:
-        return f"Already {nxt}."
-    if not can_transition(current, nxt):
-        return f"Cannot go from {current} to {nxt}."
-    if nxt in NEEDS_REASON and not (reason or "").strip():
-        return f"{nxt} needs a reason."
-    if nxt in NEEDS_EXPIRY and not (expires or "").strip():
-        return f"{nxt} needs an expiry date."
-    return None
+def _note(a: dict, status: str, by: str, note: str | None = None, at: str | None = None) -> list:
+    h = list(a.get("history") or [])
+    h.append({"status": status, "by": by, "at": at or db.now(), **({"note": note} if note else {})})
+    return h[-50:]
 
 
-def suppressed(decision: str | None, expires: str | None, today: str) -> bool:
-    """Is a finding currently suppressed by earlier feedback?
+def build_actions() -> int:
+    """Pipeline stage after findings: create, update, verify-close and reopen actions."""
+    now = db.now()
+    findings = db.q("SELECT id, org_id, rule_id, title, severity, confidence, act_by, first_seen FROM finding "
+                    "WHERE severity IN ('critical','high','medium')")
+    acts = {a["source_key"]: a for a in db.q("SELECT * FROM action")}
+    sup = suppressed(now)
+    seen, out = set(), []
+    for f in findings:
+        seen.add(f["id"])
+        pb = playbook(f["rule_id"]) or {}
+        due = f.get("act_by") or _sla_due(f)
+        a = acts.get(f["id"])
+        if not a:
+            out.append({"id": f["id"], "org_id": f["org_id"], "source_kind": "finding", "source_key": f["id"], "rule_id": f["rule_id"],
+                        "title": f["title"], "level": f["severity"], "confidence": f.get("confidence"), "owner_role": pb.get("owner"),
+                        "owner": None, "status": "new", "due": due, "created": now, "updated": now, "verified_closed_at": None, "reopened": 0,
+                        "history": [{"status": "new", "by": "aegis", "at": now, "note": "Raised from a finding."}]})
+            continue
+        upd = {**a, "title": f["title"], "level": f["severity"], "confidence": f.get("confidence"), "due": due, "updated": now,
+               "owner_role": a.get("owner_role") or pb.get("owner")}
+        if a["status"] == "resolved":
+            upd.update(status="new", reopened=(a.get("reopened") or 0) + 1, verified_closed_at=None,
+                       history=_note(a, "new", "aegis", "Reopened: the finding was observed again on the latest scan.", now))
+        elif a["status"] in ("accepted_risk", "false_positive") and f["id"] not in sup:
+            upd.update(status="new", history=_note(a, "new", "aegis", "Re-opened: the accepted-risk period ended.", now))
+        out.append(upd)
+    for key, a in acts.items():
+        if key in seen or key in sup or a["status"] not in OPEN:
+            continue
+        out.append({**a, "status": "resolved", "verified_closed_at": now, "updated": now,
+                    "history": _note(a, "resolved", "aegis", "Verified closed: the finding is no longer observed on the latest scan.", now)})
+    db.upsert("action", out)
+    return len(out)
 
-    false_positive suppresses until somebody withdraws it. accepted_risk suppresses only until
-    its expiry, so an accepted risk resurfaces for a decision rather than disappearing for good.
-    """
-    if decision == "false_positive":
-        return True
-    if decision == "accepted_risk":
-        return bool(expires) and expires > today
-    return False
+
+def set_status(aid: str, status: str, by: str | None = None, reason: str | None = None, expires: str | None = None,
+               owner: str | None = None) -> tuple[bool, str, dict | None]:
+    """Move one action along. Returns (ok, message, action). Rejections say why."""
+    a = db.one("SELECT * FROM action WHERE id=?", (aid,))
+    if not a:
+        return False, "No such action.", None
+    by = (by or "").strip() or "unnamed analyst"
+    if status == a["status"] and not owner:
+        return False, f"The action is already {status.replace('_', ' ')}.", a
+    if status != a["status"]:
+        if status not in STATUSES:
+            return False, f"Unknown status {status!r}. Allowed: {', '.join(STATUSES)}.", a
+        if status not in ALLOWED.get(a["status"], set()):
+            return False, f"Cannot move from {a['status'].replace('_', ' ')} to {status.replace('_', ' ')}.", a
+        if status in NEEDS_REASON and not (reason or "").strip():
+            return False, "A reason is required for this status.", a
+        if status == "accepted_risk":
+            exp = _parse(expires)
+            if not exp or exp <= datetime.now(timezone.utc):
+                return False, "Accepted risk needs an expiry date in the future.", a
+            expires = _iso(exp)
+    now = db.now()
+    upd = {**a, "updated": now}
+    if owner is not None:
+        upd["owner"] = owner.strip() or None
+    if status != a["status"]:
+        upd["status"] = status
+        upd["history"] = _note(a, status, by, (reason or "").strip() or None, now)
+        if status in NEEDS_REASON:
+            db.upsert("feedback", {"source_key": a["source_key"], "org_id": a["org_id"], "rule_id": a["rule_id"], "kind": status,
+                                   "reason": reason.strip(), "expires": expires, "by": by, "at": now})
+        else:
+            db.x("DELETE FROM feedback WHERE source_key=?", (a["source_key"],))
+    db.upsert("action", upd)
+    return True, "Updated.", db.one("SELECT * FROM action WHERE id=?", (aid,))
 
 
-def entry(status: str, by: str | None, at: str, reason: str | None = None, note: str | None = None) -> dict:
-    """One row of an action's history. Append-only; nothing here is ever rewritten."""
-    e = {"status": status, "by": (by or "").strip()[:80] or "unattributed", "at": at}
-    if reason:
-        e["reason"] = reason.strip()[:300]
-    if note:
-        e["note"] = note[:200]
-    return e
+def decorate(a: dict, now: str | None = None) -> dict:
+    now = now or db.now()
+    return {**a, "open": a["status"] in OPEN, "overdue": a["status"] in OPEN and bool(a.get("due")) and a["due"] < now,
+            "playbook": playbook(a.get("rule_id"))}
+
+
+def queue(org: str | None = None, level: str | None = None, status: str | None = None, owner_role: str | None = None,
+          overdue: bool = False, open_only: bool = True, limit: int = 400, orgs: set | None = None, days: int = 30) -> dict:
+    """`days` sets the window for the closure KPIs (verified closed, median days to close); open/overdue are the current state."""
+    now = db.now()
+    rows = [decorate(a, now) for a in db.q("SELECT * FROM action")]
+    if orgs is not None:
+        rows = [a for a in rows if a["org_id"] in orgs]
+    base = rows
+    if org:
+        rows = [a for a in rows if a["org_id"] == org]
+    if level:
+        rows = [a for a in rows if a["level"] == level]
+    if status:
+        rows = [a for a in rows if a["status"] == status]
+    elif open_only:
+        rows = [a for a in rows if a["open"]]
+    if owner_role:
+        rows = [a for a in rows if a["owner_role"] == owner_role]
+    if overdue:
+        rows = [a for a in rows if a["overdue"]]
+    rows.sort(key=lambda a: (not a["overdue"], RANK.get(a["level"], 9), a.get("due") or "9"))
+    opened = [a for a in base if a["open"]]
+    closed30 = [a for a in base if a.get("verified_closed_at") and a["verified_closed_at"] >= _iso(datetime.now(timezone.utc) - timedelta(days=days))]
+    raised_w = sum(1 for a in base if (a.get("created") or "") >= _iso(datetime.now(timezone.utc) - timedelta(days=days)))
+    ttc = [((_parse(a["verified_closed_at"]) - _parse(a["created"])).total_seconds() / 86400) for a in closed30 if _parse(a["created"])]
+    kpi = {"open": len(opened), "by_level": dict(Counter(a["level"] for a in opened)), "overdue": sum(1 for a in opened if a["overdue"]),
+           "verified_closed_30d": len(closed30), "median_days_to_close": round(statistics.median(ttc), 1) if ttc else None,
+           "window": days, "raised_window": raised_w,  # verified_closed_30d holds the selected window (name kept for production compatibility)
+           "by_owner": dict(Counter(a["owner_role"] or "Unassigned" for a in opened)),
+           "by_status": dict(Counter(a["status"] for a in base))}
+    return {"actions": rows[:limit], "total": len(rows), "kpi": kpi, "statuses": STATUSES, "owner_roles": OWNERS}

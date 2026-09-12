@@ -1,9 +1,8 @@
-import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
-import type { MouseEvent as RMouseEvent, PointerEvent as RPointerEvent } from 'react'
-import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { geoNaturalEarth1, geoPath, geoGraticule10, geoCentroid } from 'd3-geo'
 import { feature } from 'topojson-client'
 import world from 'world-atlas/countries-110m.json'
+import { Plus, Minus, RotateCcw } from 'lucide-react'
 import { SEV_COLOR, BLUE_RAMP, SERIES, SURFACE } from '../lib/chartTheme'
 
 // ISO alpha-2 → world-atlas (Natural Earth) country name
@@ -24,10 +23,37 @@ const A2N: Record<string, string> = {
 export type MapPoint = { id: string; lat?: number | null; lon?: number | null; country?: string | null; level?: string | null; label: string; sub?: string; onClick?: () => void; pulse?: boolean }
 
 const W = 960, H = 470
-const MAX_K = 8
+const K_MAX = 12
+// Quick zoom targets: [west, south, east, north] in degrees
+const REGIONS: { id: string; label: string; box?: [number, number, number, number] }[] = [
+  { id: 'world', label: 'World' },
+  { id: 'na', label: 'North America', box: [-128, 14, -60, 56] },
+  { id: 'eu', label: 'Europe', box: [-12, 35, 32, 62] },
+  { id: 'uk', label: 'UK & Benelux', box: [-9, 49, 10, 59] },
+  { id: 'apac', label: 'Asia-Pacific', box: [68, -44, 178, 46] },
+  { id: 'latam', label: 'Latin America', box: [-92, -56, -32, 24] },
+]
 
-export default function WorldMap({ points = [], choropleth, height, zoomable, onCountry }: { points?: MapPoint[]; choropleth?: Record<string, number>; height?: number; zoomable?: boolean; onCountry?: (a2: string) => void }) {
+type View = { k: number; x: number; y: number }
+const ID: View = { k: 1, x: 0, y: 0 }
+const clampV = (v: View): View => {
+  const k = Math.min(K_MAX, Math.max(1, v.k))
+  return { k, x: Math.min(0, Math.max(W - W * k, v.x)), y: Math.min(0, Math.max(H - H * k, v.y)) }
+}
+
+export default function WorldMap({ points = [], choropleth, height, onCountry, zoom = true }: { points?: MapPoint[]; choropleth?: Record<string, number>; height?: number; onCountry?: (a2: string) => void; zoom?: boolean }) {
   const [hover, setHover] = useState<{ x: number; y: number; p?: MapPoint; country?: string; n?: number } | null>(null)
+  const [view, setView] = useState<View>(ID)
+  const [region, setRegion] = useState('world')
+  const [dragging, setDragging] = useState(false)
+  const [hint, setHint] = useState(false)
+  const wrap = useRef<HTMLDivElement>(null)
+  const svg = useRef<SVGSVGElement>(null)
+  const viewRef = useRef(view); viewRef.current = view
+  const drag = useRef<{ px: number; py: number; v: View; moved: boolean } | null>(null)
+  const suppressClick = useRef(false)
+  const anim = useRef<number>(0)
+
   const { countries, path, proj, centroids, grat } = useMemo(() => {
     const fc: any = feature(world as any, (world as any).objects.countries)
     const proj = geoNaturalEarth1().fitExtent([[6, 6], [W - 6, H - 6]], { type: 'Sphere' } as any)
@@ -52,6 +78,101 @@ export default function WorldMap({ points = [], choropleth, height, zoomable, on
     return { ...p, x: xy[0], y: xy[1], approx }
   }).filter(Boolean) as (MapPoint & { x: number; y: number; approx: boolean })[], [points, proj, centroids])
 
+  // --- zoom & pan (all in the SVG's own 960×470 coordinate space) ---
+  const toSvg = (cx: number, cy: number): [number, number] => {
+    const el = svg.current
+    const m = el?.getScreenCTM()
+    if (!el || !m) return [W / 2, H / 2]
+    const pt = el.createSVGPoint(); pt.x = cx; pt.y = cy
+    const r = pt.matrixTransform(m.inverse())
+    return [r.x, r.y]
+  }
+  const zoomAround = (v: View, sx: number, sy: number, f: number): View => {
+    const k = Math.min(K_MAX, Math.max(1, v.k * f))
+    return clampV({ k, x: sx - ((sx - v.x) * k) / v.k, y: sy - ((sy - v.y) * k) / v.k })
+  }
+  const animateTo = (to: View) => {
+    cancelAnimationFrame(anim.current)
+    const from = viewRef.current, t0 = performance.now(), dur = 380
+    const step = (t: number) => {
+      const u = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - u, 3)
+      // interpolate scale geometrically so the motion feels even
+      const k = from.k * Math.pow(to.k / from.k, e)
+      setView({ k, x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e })
+      if (u < 1) anim.current = requestAnimationFrame(step)
+    }
+    anim.current = requestAnimationFrame(step)
+  }
+  const goRegion = (id: string) => {
+    setRegion(id)
+    const r = REGIONS.find(x => x.id === id)
+    if (!r?.box) { animateTo(ID); return }
+    const [w, s, e, n] = r.box
+    const xs: number[] = [], ys: number[] = []
+    for (let i = 0; i <= 8; i++) for (let j = 0; j <= 8; j++) {
+      const p = proj([w + ((e - w) * i) / 8, s + ((n - s) * j) / 8]); if (p) { xs.push(p[0]); ys.push(p[1]) }
+    }
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys)
+    const k = Math.min(K_MAX, Math.max(1, 0.95 * Math.min(W / (x1 - x0), H / (y1 - y0))))
+    animateTo(clampV({ k, x: W / 2 - ((x0 + x1) / 2) * k, y: H / 2 - ((y0 + y1) / 2) * k }))
+  }
+  const button = (f: number) => { setRegion(''); animateTo(zoomAround(viewRef.current, W / 2, H / 2, f)) }
+
+  // Ctrl/⌘ + wheel (and trackpad pinch, which browsers report as ctrl+wheel) zooms; a plain wheel keeps scrolling the page.
+  useEffect(() => {
+    const el = svg.current
+    if (!el || !zoom) return
+    let t: any
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) { setHint(true); clearTimeout(t); t = setTimeout(() => setHint(false), 1400); return }
+      e.preventDefault()
+      cancelAnimationFrame(anim.current)
+      const [sx, sy] = toSvg(e.clientX, e.clientY)
+      setRegion('')
+      setView(v => zoomAround(v, sx, sy, Math.exp(-e.deltaY * 0.0022)))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => { el.removeEventListener('wheel', onWheel); clearTimeout(t) }
+  }, [zoom]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => cancelAnimationFrame(anim.current), [])
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (!zoom || e.button !== 0 || viewRef.current.k <= 1.001) return
+    cancelAnimationFrame(anim.current)
+    drag.current = { px: e.clientX, py: e.clientY, v: viewRef.current, moved: false }
+  }
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = drag.current
+    if (wrap.current && !d) {
+      // tooltip position relative to the map box
+      const r = wrap.current.getBoundingClientRect()
+      if (hover) setHover(h => (h ? { ...h, x: e.clientX - r.left, y: e.clientY - r.top } : h))
+    }
+    if (!d) return
+    const dx = e.clientX - d.px, dy = e.clientY - d.py
+    if (!d.moved && Math.hypot(dx, dy) < 4) return
+    if (!d.moved) { d.moved = true; setDragging(true); setHover(null); (e.currentTarget as Element).setPointerCapture?.(e.pointerId) }
+    const m = svg.current?.getScreenCTM()
+    const s = m ? m.a : 1 // screen pixels per SVG unit
+    setView(clampV({ k: d.v.k, x: d.v.x + dx / s, y: d.v.y + dy / s }))
+    setRegion('')
+  }
+  const onPointerUp = () => {
+    if (drag.current?.moved) { suppressClick.current = true; setTimeout(() => (suppressClick.current = false), 0) }
+    drag.current = null; setDragging(false)
+  }
+  const onDoubleClick = (e: React.MouseEvent) => {
+    if (!zoom) return
+    const [sx, sy] = toSvg(e.clientX, e.clientY)
+    setRegion('')
+    animateTo(zoomAround(viewRef.current, sx, sy, e.shiftKey ? 0.5 : 2))  // Shift + double-click zooms out
+  }
+  const at = (e: React.MouseEvent) => {
+    const r = wrap.current?.getBoundingClientRect()
+    return r ? { x: e.clientX - r.left, y: e.clientY - r.top } : { x: 0, y: 0 }
+  }
+
   const fill = (name: string) => {
     if (!choropleth) return undefined
     const a2 = n2a[name]
@@ -61,123 +182,56 @@ export default function WorldMap({ points = [], choropleth, height, zoomable, on
     return BLUE_RAMP[i]
   }
   const order = { low: 0, medium: 1, high: 2, critical: 3 } as Record<string, number>
-
-  // ---- zoom & pan · opt-in, so the small choropleth cards stay static ----
-  const wrapRef = useRef<HTMLDivElement>(null)
-  const svgRef = useRef<SVGSVGElement>(null)
-  const [zoom, setZoom] = useState({ k: 1, x: 0, y: 0 })
-  const [grabbing, setGrabbing] = useState(false)
-  const drag = useRef<{ vx: number; vy: number; x: number; y: number } | null>(null)
-  const moved = useRef(false)
-  const captured = useRef(false)
-
-  // keep the map covering the frame: at k=1 there is nothing to pan to
-  const clamp = (z: { k: number; x: number; y: number }) => {
-    const k = Math.max(1, Math.min(MAX_K, z.k))
-    return { k, x: Math.max(W * (1 - k), Math.min(0, z.x)), y: Math.max(H * (1 - k), Math.min(0, z.y)) }
-  }
-  // client pixels → viewBox units, honouring preserveAspectRatio letterboxing
-  const toVB = useCallback((cx: number, cy: number): [number, number] | null => {
-    const ctm = svgRef.current?.getScreenCTM()
-    if (!ctm) return null
-    const p = new DOMPoint(cx, cy).matrixTransform(ctm.inverse())
-    return [p.x, p.y]
-  }, [])
-  const zoomBy = useCallback((factor: number, cx?: number, cy?: number) => {
-    setZoom(z => {
-      const k = Math.max(1, Math.min(MAX_K, z.k * factor))
-      const c = (cx != null && cy != null ? toVB(cx, cy) : null) || [W / 2, H / 2]
-      // hold whatever is under the cursor still
-      return clamp({ k, x: c[0] - (k / z.k) * (c[0] - z.x), y: c[1] - (k / z.k) * (c[1] - z.y) })
-    })
-  }, [toVB])
-  const reset = () => setZoom({ k: 1, x: 0, y: 0 })
-
-  // React's onWheel is passive, so it cannot preventDefault the page scroll
-  useEffect(() => {
-    const el = svgRef.current
-    if (!zoomable || !el) return
-    const h = (e: WheelEvent) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX, e.clientY) }
-    el.addEventListener('wheel', h, { passive: false })
-    return () => el.removeEventListener('wheel', h)
-  }, [zoomable, zoomBy])
-
-  const onDown = (e: RPointerEvent<SVGSVGElement>) => {
-    if (!zoomable) return
-    const v = toVB(e.clientX, e.clientY)
-    if (!v) return
-    moved.current = false
-    drag.current = { vx: v[0], vy: v[1], x: zoom.x, y: zoom.y }
-    setGrabbing(true)
-  }
-  const onDrag = (e: RPointerEvent<SVGSVGElement>) => {
-    const d = drag.current
-    if (!d) return
-    const v = toVB(e.clientX, e.clientY)
-    if (!v) return
-    // a real drag suppresses the click, so panning never opens an organisation
-    if (Math.abs(v[0] - d.vx) > 1.5 || Math.abs(v[1] - d.vy) > 1.5) {
-      moved.current = true
-      // capture only once panning actually starts: capturing on pointerdown would
-      // retarget the click to the <svg> and a plain click would never reach a marker
-      if (!captured.current) { e.currentTarget.setPointerCapture?.(e.pointerId); captured.current = true }
-    }
-    setZoom(z => clamp({ k: z.k, x: d.x + (v[0] - d.vx), y: d.y + (v[1] - d.vy) }))
-  }
-  const onUp = (e: RPointerEvent<SVGSVGElement>) => {
-    if (captured.current) { e.currentTarget.releasePointerCapture?.(e.pointerId); captured.current = false }
-    drag.current = null
-    setGrabbing(false)
-  }
-
-  // tooltip coords are CSS pixels inside the wrapper, so they stay right when zoomed
-  const at = (e: RMouseEvent) => {
-    const r = wrapRef.current?.getBoundingClientRect()
-    return r ? { x: e.clientX - r.left, y: e.clientY - r.top } : { x: 0, y: 0 }
-  }
-  const tipMax = (wrapRef.current?.clientWidth || W) - 190
-  const inv = 1 / zoom.k
+  const k = view.k
+  const inView = zoom && k > 1.001 ? placed.filter(p => { const x = p.x * k + view.x, y = p.y * k + view.y; return x >= 0 && x <= W && y >= 0 && y <= H }).length : placed.length
+  const ww = wrap.current?.clientWidth || 800
 
   return (
-    <div ref={wrapRef} className={`map-wrap${zoomable ? ' zoomable' : ''}${grabbing ? ' grabbing' : ''}`} style={{ height }} onMouseLeave={() => setHover(null)}>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ height: height || 'auto' }}
-        onPointerDown={onDown} onPointerMove={onDrag} onPointerUp={onUp} onPointerCancel={onUp}
-        onDoubleClick={e => { if (zoomable) zoomBy(1.6, e.clientX, e.clientY) }}>
-        <g transform={`translate(${zoom.x} ${zoom.y}) scale(${zoom.k})`}>
+    <div ref={wrap} className="map-wrap" style={{ height }} onMouseLeave={() => { setHover(null); onPointerUp() }}>
+      <svg ref={svg} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ height: height || 'auto', touchAction: k > 1.001 ? 'none' : 'pan-y' }}
+        className={dragging ? 'dragging' : zoom && k > 1.001 ? 'pannable' : undefined}
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onDoubleClick={onDoubleClick}>
+        <g transform={`translate(${view.x} ${view.y}) scale(${k})`}>
           <path d={grat || ''} className="map-grat" vectorEffect="non-scaling-stroke" />
           {countries.map((f: any) => (
             <path key={f.id || f.properties.name} d={path(f) || ''} className="map-land" vectorEffect="non-scaling-stroke"
               style={{ fill: fill(f.properties.name), cursor: onCountry && n2a[f.properties.name] ? 'pointer' : undefined }}
-              onMouseMove={e => choropleth && setHover({ ...at(e), country: f.properties.name, n: choropleth[n2a[f.properties.name]] || 0 })}
-              onClick={() => { if (!moved.current && onCountry && n2a[f.properties.name]) onCountry(n2a[f.properties.name]) }} />
+              onMouseMove={e => choropleth && !drag.current?.moved && setHover({ ...at(e), country: f.properties.name, n: choropleth[n2a[f.properties.name]] || 0 })}
+              onClick={() => !suppressClick.current && onCountry && n2a[f.properties.name] && onCountry(n2a[f.properties.name])} />
           ))}
           {[...placed].sort((a, b) => (order[a.level || 'low'] || 0) - (order[b.level || 'low'] || 0)).map(p => {
             const c = SEV_COLOR[p.level || 'low'] || SERIES[0]
-            // markers keep a constant on-screen size as the map scales
-            const r = (p.level === 'critical' ? 4.5 : p.level === 'high' ? 4 : 3.2) * inv
+            // on screen, markers grow by a quarter per doubling of zoom (not with the map), so clusters separate as you zoom in
+            const r = ((p.level === 'critical' ? 4.5 : p.level === 'high' ? 4 : 3.2) * (1 + 0.25 * Math.log2(k))) / k
             return (
-              <g key={p.id} style={{ cursor: p.onClick ? 'pointer' : 'default' }} onClick={() => { if (!moved.current) p.onClick?.() }}
-                onMouseMove={e => setHover({ ...at(e), p })}>
-                {p.pulse && <circle cx={p.x} cy={p.y} r={r} fill="none" stroke={c} strokeWidth={1.5 * inv} className="ping" />}
-                <circle cx={p.x} cy={p.y} r={12 * inv} fill="transparent" />
-                <circle cx={p.x} cy={p.y} r={r} fill={c} stroke={SURFACE} strokeWidth={1.5 * inv} />
+              <g key={p.id} style={{ cursor: p.onClick ? 'pointer' : 'default' }} onClick={() => !suppressClick.current && p.onClick?.()}
+                onMouseMove={e => !drag.current?.moved && setHover({ ...at(e), p })}>
+                {p.pulse && <circle cx={p.x} cy={p.y} r={r} fill="none" stroke={c} strokeWidth={1.5 / k} className="ping" />}
+                <circle cx={p.x} cy={p.y} r={12 / k} fill="transparent" />
+                <circle cx={p.x} cy={p.y} r={r} fill={c} stroke={SURFACE} strokeWidth={1.5 / k} />
               </g>
             )
           })}
         </g>
       </svg>
-      {zoomable && (
+      {zoom && (
         <>
-          <div className="map-zoom">
-            <button className="btn" title="Zoom in" aria-label="Zoom in" disabled={zoom.k >= MAX_K} onClick={() => zoomBy(1.6)}><ZoomIn size={14} /></button>
-            <button className="btn" title="Zoom out" aria-label="Zoom out" disabled={zoom.k <= 1} onClick={() => zoomBy(1 / 1.6)}><ZoomOut size={14} /></button>
-            <button className="btn" title="Reset view" aria-label="Reset view" disabled={zoom.k === 1 && zoom.x === 0 && zoom.y === 0} onClick={reset}><Maximize2 size={14} /></button>
+          {(height ?? 440) >= 320 && (  // small maps keep only the zoom buttons
+            <div className="map-regions">
+              {REGIONS.map(r => <button key={r.id} className={region === r.id ? 'on' : undefined} onClick={() => goRegion(r.id)}>{r.label}</button>)}
+            </div>)}
+          <div className="map-ctrl">
+            <button title="Zoom in" aria-label="Zoom in" onClick={() => button(2)} disabled={k >= K_MAX - 0.01}><Plus size={14} /></button>
+            <button title="Zoom out" aria-label="Zoom out" onClick={() => button(0.5)} disabled={k <= 1.001}><Minus size={14} /></button>
+            <button title="Reset to world view" aria-label="Reset" onClick={() => goRegion('world')} disabled={k <= 1.001}><RotateCcw size={13} /></button>
           </div>
-          <div className="map-hint">scroll to zoom · drag to pan{zoom.k > 1 ? ` · ${zoom.k.toFixed(1)}×` : ''}</div>
+          <div className="map-hint">
+            {hint ? 'Hold Ctrl (⌘ on Mac) and scroll to zoom' : k > 1.001 ? `${Math.round(k * 10) / 10}× · drag to pan · ${inView} of ${placed.length} markers in view` : 'Double-click, Ctrl + scroll or pick a region to zoom'}
+          </div>
         </>
       )}
       {hover && (hover.p || hover.country) && (
-        <div className="tip" style={{ position: 'absolute', left: Math.min(hover.x + 14, tipMax), top: hover.y + 10, pointerEvents: 'none' }}>
+        <div className="tip" style={{ position: 'absolute', left: Math.max(4, Math.min(hover.x + 14, ww - 250)), top: hover.y + 12, pointerEvents: 'none' }}>
           {hover.p ? (<><strong>{hover.p.label}</strong>{hover.p.sub && <div>{hover.p.sub}</div>}{(hover.p as any).approx && <div className="muted">Location: country level</div>}</>)
             : (<><strong>{hover.n}</strong> · {hover.country}</>)}
         </div>

@@ -1,6 +1,6 @@
 import { ReactNode } from 'react'
-import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell, LabelList } from 'recharts'
-import { SERIES, rcAxis, INK, INK2, MUTED, GRID, CURSOR } from '../lib/chartTheme'
+import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Cell, LabelList } from 'recharts'
+import { SERIES, rcAxis, INK, INK2, MUTED, GRID, CURSOR, NEUTRAL } from '../lib/chartTheme'
 
 /** Recharts tooltip: value leads, series name follows, line-key per series. */
 export function RcTip({ active, payload, label, fmt }: any) {
@@ -77,6 +77,56 @@ export function Columns({ data, x, y, height = 200, color, fmtX }: { data: any[]
         <Tooltip content={<RcTip fmt={fmtX} />} cursor={{ fill: CURSOR }} />
         <Bar dataKey={y} name="count" fill={color} radius={[4, 4, 0, 0]} maxBarSize={24} isAnimationActive={false} />
       </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
+/** Spread, explained in plain terms: who reported the incident, in order, and how long after the first report —
+ *  each bar is the delay from the first report; the dashed line is the 72-hour "spreading" window. */
+export function SpreadTimeline({ curve }: { curve: { h: number; publishers: number; publisher?: string }[] }) {
+  if (!curve?.length) return null
+  const max = Math.max(72, ...curve.map(c => c.h))
+  const fmt = (h: number) => (h <= 0 ? 'first' :h < 48 ? `+${Math.round(h)}h` : `+${Math.round(h / 24)}d`)
+  const in72 = curve.filter(c => c.h <= 72).length
+  const third = curve.length >= 3 ? curve[2].h : null
+  return (
+    <div>
+      <div style={{ fontSize: 13, marginBottom: 10, lineHeight: 1.5 }}>
+        <b>{curve.length}</b> independent publisher{curve.length === 1 ? '' : 's'} reported it — <b>{in72}</b> within 72 hours of the first report
+        {third != null && <>; the third came <b>{Math.round(third)} hours</b> after the first</>}.{' '}
+        {in72 >= 3 ? <span className="pill">spreading</span> : <span className="muted">(“spreading” = 3 or more within 72 hours)</span>}
+      </div>
+      <div className="stack" style={{ gap: 6 }}>
+        {curve.map((c, i) => (
+          <div key={i} className="row" style={{ gap: 8, fontSize: 12.5 }}>
+            <span className="muted" style={{ width: 16, textAlign: 'right' }}>{i + 1}</span>
+            <span className="trunc" style={{ width: 160 }} title={c.publisher}>{c.publisher}</span>
+            <div style={{ flex: 1, position: 'relative', height: 10, background: 'var(--hair)', borderRadius: 5 }}>
+              <div style={{ position: 'absolute', left: 0, width: `${Math.max(1.5, (c.h / max) * 100)}%`, height: '100%', background: c.h <= 72 ? SERIES[0] : NEUTRAL, borderRadius: 5 }} />
+              <div title="72 hours after the first report" style={{ position: 'absolute', left: `${(72 / max) * 100}%`, top: -4, bottom: -4, borderLeft: `2px dashed ${MUTED}` }} />
+            </div>
+            <span className="mono" style={{ width: 84, textAlign: 'right' }}>{fmt(c.h)}</span>
+          </div>))}
+      </div>
+      <div className="muted" style={{ fontSize: 11.5, marginTop: 8 }}>Each bar = delay from the first report to that publisher's report · dashed line = 72 hours.</div>
+    </div>
+  )
+}
+
+/** Spread curve: cumulative independent publishers (y) by hours since the first report (x), as a step line. */
+export function SpreadCurve({ curve, height = 200, color }: { curve: { h: number; publishers: number; publisher?: string }[]; height?: number; color?: string }) {
+  color = color || SERIES[0]
+  const fmtH = (h: number) => (h < 48 ? `${h}h` : `${Math.round(h / 24)}d`)
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={curve} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+        <CartesianGrid stroke={GRID} vertical={false} />
+        <XAxis dataKey="h" type="number" domain={[0, 'dataMax']} {...rcAxis} tickFormatter={fmtH} />
+        <YAxis {...rcAxis} allowDecimals={false} width={40} />
+        <Tooltip content={({ active, payload }: any) => active && payload?.length ? (
+          <div className="tip"><b style={{ color: INK }}>{payload[0].payload.publishers}</b> publishers after {fmtH(payload[0].payload.h)}<div style={{ color: INK2 }}>{payload[0].payload.publisher}</div></div>) : null} />
+        <Line type="stepAfter" dataKey="publishers" stroke={color} strokeWidth={2} dot={{ r: 4, strokeWidth: 2 }} isAnimationActive={false} />
+      </LineChart>
     </ResponsiveContainer>
   )
 }
