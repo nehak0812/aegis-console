@@ -1051,7 +1051,6 @@ def _posture_map() -> dict:
     return agg
 
 
-@app.get("/api/orgs")
 def _in_clause(col: str, values: list[str], blank_label: str, params: list) -> str:
     """SQL for a multi-select filter, treating the facet's blank label as IS NULL."""
     picked = [v for v in values if v != blank_label]
@@ -1063,6 +1062,7 @@ def _in_clause(col: str, values: list[str], blank_label: str, params: list) -> s
     return " AND (" + " OR ".join(parts) + ")"
 
 
+@app.get("/api/orgs")
 def orgs(q: str | None = None, sector: list[str] | None = Query(None), country: list[str] | None = Query(None),
          index: list[str] | None = Query(None), level: str | None = None,
          provider: str | None = None, days: int = 30):
