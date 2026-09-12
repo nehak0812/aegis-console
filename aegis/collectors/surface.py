@@ -9,15 +9,19 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 from aegis import CACHE_DIR, db, net
+from aegis.guard import allow_host
 from aegis.intel import fingerprints as fp
-from aegis.intel import hardening as hd
+from aegis.intel import prevent
 from aegis.intel.entities import norm
 from aegis.registry import Source, collector
 
 DOH = ["https://dns.google/resolve", "https://cloudflare-dns.com/dns-query"]
 CLOUD_FILE = os.path.join(CACHE_DIR, "cloud_ranges.json")
+RPKI_MAX = 25          # prefixes validated per organisation per scan (one RIPEstat call each)
+LOOKALIKE_MAX = 40     # generated variants resolved per organisation per scan (two DNS lookups each)
 INTERESTING = re.compile(r"^(www|mail|webmail|smtp|vpn|sslvpn|remote|portal|sso|login|auth|id|idp|adfs|sts|owa|autodiscover|"
                          r"citrix|gateway|gw|api|apps?|jira|confluence|git|gitlab|jenkins|ftp|sftp|mft|transfer|secure|"
                          r"connect|access|ra|rdweb|extranet|partner|dev|test|staging|uat|admin|cpanel|intranet|shop|store|"
@@ -37,22 +41,6 @@ def doh(name: str, rtype: str) -> tuple[list[str], bool]:
         ans = [a.get("data", "") for a in js.get("Answer", []) if want is None or a.get("type") == want]
         return [a.strip('"').replace('" "', "") for a in ans], bool(js.get("AD"))
     return [], False
-
-
-def doh_status(name: str, rtype: str) -> tuple[list[str], bool, bool]:
-    """Like doh(), plus whether a resolver actually answered (NOERROR or NXDOMAIN), so a caller can tell
-    "no such record" from "lookup failed" and never report a missing record because of a resolver outage."""
-    for base in DOH:
-        try:
-            js = net.get_json(base, params={"name": name, "type": rtype}, headers={"Accept": "application/dns-json"}, timeout=12, retries=1)
-        except Exception:
-            continue
-        if js is None or js.get("Status") not in (0, 3):
-            continue
-        want = {"A": 1, "NS": 2, "CNAME": 5, "MX": 15, "TXT": 16, "AAAA": 28, "DS": 43, "CAA": 257}.get(rtype)
-        ans = [a.get("data", "") for a in js.get("Answer", []) if want is None or a.get("type") == want]
-        return [a.strip('"').replace('" "', "") for a in ans], bool(js.get("AD")), True
-    return [], False, False
 
 
 # ------------------------------------------------------------------ cloud ranges
@@ -183,17 +171,21 @@ def spf_parse(txts: list[str]) -> dict | None:
             "lookups": sum(1 for t in toks if re.match(r"(?i)^[+~?-]?(include:|a\b|a:|mx\b|mx:|ptr|exists:|redirect=)", t))}
 
 
-def ct_hostnames(domain: str, certs: list | None = None) -> tuple[list[str], str]:
-    """certs (optional): receives one compact record per crt.sh row (issuer, not_before, not_after, names)."""
+def ct_hostnames(domain: str) -> tuple[list[str], str, list[dict]]:
+    """Public hostnames from Certificate Transparency, plus the certificate metadata
+    on the same response (issuer and expiry) — used for CRT-* without a second request,
+    which matters because crt.sh is paced at one call every 3 seconds."""
     names: set[str] = set()
+    certs: list[dict] = []
     src = ""
     try:
         js = net.get_json("https://crt.sh/", params={"q": f"%.{domain}", "output": "json", "exclude": "expired"}, timeout=60, retries=1)
         for r in js or []:
             for n in (r.get("name_value") or "").split("\n"):
                 names.add(n.strip().lower().lstrip("*."))
-            if certs is not None:
-                certs.append(hd.ct_compact(r))
+            if len(certs) < 600:
+                certs.append({"serial": str(r.get("serial_number") or "")[:40], "issuer": (r.get("issuer_name") or "")[:200],
+                              "not_after": r.get("not_after"), "cn": (r.get("common_name") or "").strip().lower().lstrip("*.")})
         src = "crt.sh"
     except Exception:
         pass
@@ -208,7 +200,60 @@ def ct_hostnames(domain: str, certs: list | None = None) -> tuple[list[str], str
         except Exception:
             pass
     names = {n for n in names if n == domain or n.endswith("." + domain)}
-    return sorted(names), src
+    return sorted(names), src, certs
+
+
+# ------------------------------------------------------------------ RDAP (domain lifecycle)
+_RDAP_BASES: dict[str, str] = {}
+
+
+def rdap_bootstrap() -> dict[str, str]:
+    """IANA's authoritative TLD -> RDAP base map, and the only place RDAP hosts are trusted.
+
+    Each server is registered on the passive allow-list here rather than reached by
+    following rdap.org's redirect, so every RDAP host we talk to is one IANA publishes.
+    """
+    global _RDAP_BASES
+    if _RDAP_BASES:
+        return _RDAP_BASES
+    out: dict[str, str] = {}
+    try:
+        js = json.loads(net.cached("https://data.iana.org/rdap/dns.json", 24))
+    except Exception as e:
+        print("[surface] rdap bootstrap", e)
+        return out
+    for entry in js.get("services", []):
+        if len(entry) < 2:
+            continue
+        tlds, urls = entry[0], entry[1]
+        base = next((u for u in urls if str(u).startswith("https://")), None)
+        if not base:
+            continue
+        allow_host(urlparse(base).netloc)
+        for t in tlds:
+            out[str(t).strip().lower()] = base.rstrip("/")
+    _RDAP_BASES = out
+    return out
+
+
+def rdap(domain: str) -> dict | None:
+    base = rdap_bootstrap().get(domain.rsplit(".", 1)[-1].lower())
+    if not base:
+        return None
+    try:
+        return net.get_json(f"{base}/domain/{domain}", timeout=20, retries=1, ok_404=True)
+    except Exception:
+        return None
+
+
+def rpki_state(asn: str, cidr: str) -> str | None:
+    """RIPEstat route-origin validation for one (prefix, origin AS) pair."""
+    try:
+        js = net.get_json("https://stat.ripe.net/data/rpki-validation/data.json",
+                          params={"resource": f"AS{asn}", "prefix": cidr, "sourceapp": "aegis"}, timeout=25, retries=1)
+        return ((js or {}).get("data") or {}).get("status")
+    except Exception:
+        return None
 
 
 def cymru(ip: str) -> dict | None:
@@ -263,9 +308,7 @@ def scan_org(o: dict) -> dict:
                  "sp": tags.get("sp", "").strip().lower(), "rua": bool(tags.get("rua"))}
     dkim = [k.split(":")[1] for k, v in q.items() if k.startswith("DKIM:") and any("p=" in x or "k=" in x for x in v[0])]
     hygiene = {"spf": spf, "dmarc": dmarc, "dnssec": bool(q["DS"][0]), "mta_sts": bool(q["MTASTS"][0]), "tls_rpt": bool(q["TLSRPT"][0]),
-               "caa": q["CAA"][0][:6], "dkim_selectors": dkim, "mx": mx[:6], "ns": ns[:8],
-               # raw TXT (trimmed) so provider patterns added later can be applied without a rescan
-               "txt": [t[:120] for t in txt if not t.lower().startswith("v=spf1")][:40]}
+               "caa": q["CAA"][0][:6], "dkim_selectors": dkim, "mx": mx[:6], "ns": ns[:8]}
 
     for m in mx:
         hit = fp.match(fp.MX_C, m)
@@ -288,8 +331,7 @@ def scan_org(o: dict) -> dict:
             dep(hit[0], hit[1], f"SPF include:{inc}")
 
     # --- certificate transparency hostnames
-    certs: list[dict] = []
-    names, ct_src = ct_hostnames(d, certs)
+    names, ct_src, certs = ct_hostnames(d)
     edge = []
     for n in names:
         e = fp.edge_product(n)
@@ -354,22 +396,95 @@ def scan_org(o: dict) -> dict:
             js = net.get_json("https://stat.ripe.net/data/announced-prefixes/data.json", params={"resource": f"AS{a}", "sourceapp": "aegis"}, timeout=30)
             for p in (js.get("data") or {}).get("prefixes", [])[:150]:
                 if ":" not in p["prefix"]:
-                    prefixes.append({"cidr": p["prefix"], "prov": f"announced by AS{a} (registered to organisation)"})
+                    prefixes.append({"cidr": p["prefix"], "prov": f"announced by AS{a} (registered to organisation)", "asn": a})
         except Exception as e:
             print("[surface] ripestat", a, e)
+    # --- routing integrity: is each announced prefix covered by a matching ROA?
+    rpki: dict[str, str] = {}
+    checkable = [p for p in prefixes if p.get("asn")][:RPKI_MAX]
+    if checkable:
+        with ThreadPoolExecutor(4) as ex:
+            for p, st in zip(checkable, ex.map(lambda x: rpki_state(x["asn"], x["cidr"]), checkable)):
+                if st:
+                    rpki[p["cidr"]] = st
     for p in prefixes:
+        at = {"provenance": p["prov"]}
+        if p["cidr"] in rpki:
+            at["rpki"] = rpki[p["cidr"]]
+            at["rpki_asn"] = p["asn"]
         assets.append({"org_id": o["id"], "kind": "prefix", "value": p["cidr"], "source_id": "surface", "first_seen": now, "last_seen": now,
-                       "attrs": {"provenance": p["prov"]}})
+                       "attrs": at})
+
+    # --- domain lifecycle: registrar transfer lock and expiry, from the TLD's own RDAP server
+    rd = prevent.rdap_summary(rdap(d))
+
+    # --- certificates: soonest expiry on a hostname that actually resolves, and CAA conformance
+    live = {h for h, r in resolved.items() if r.get("ips")}
+    allowed = prevent.caa_allowed(hygiene.get("caa"))
+    policy_key = prevent.caa_key(hygiene.get("caa"))
+    soonest, candidates = None, []
+    seen_issuers: set[str] = set()
+    for c in certs:
+        if c["cn"] in live:
+            left = prevent.days_until(c["not_after"])
+            if left is not None and left >= 0 and (soonest is None or left < soonest["days"]):
+                soonest = {"days": left, "host": c["cn"], "not_after": c["not_after"], "issuer": c["issuer"]}
+        iss = c["issuer"]
+        # only judge names this domain's own CAA policy governs
+        if not iss or iss in seen_issuers or not prevent.covered_by(c["cn"], d):
+            continue
+        # the issuance-time test needs the policy's first-seen time, which only store_scan
+        # knows, so gather candidates here and let it decide
+        if prevent.caa_violation(iss, allowed, "9999", ""):
+            seen_issuers.add(iss)
+            candidates.append({"issuer": iss, "serial": c["serial"], "cn": c["cn"], "issued": c.get("not_before")})
+    cert_info = {"checked": len(certs), "soonest": soonest, "caa_allowed": sorted(allowed) if allowed is not None else None,
+                 "caa_key": policy_key, "caa_seen": now, "caa_candidates": candidates[:8], "caa_offenders": []}
+
+    # --- lookalike domains: generated locally, resolved through public resolvers only
+    cands = prevent.lookalikes(d, LOOKALIKE_MAX)
+    if cands:
+        with ThreadPoolExecutor(8) as ex:
+            a_jobs = {c: ex.submit(doh, c, "A") for c in cands}
+            m_jobs = {c: ex.submit(doh, c, "MX") for c in cands}
+            for c in cands:
+                a_rec = [x for x in a_jobs[c].result()[0] if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", x)]
+                mx_rec = [m.split()[-1].rstrip(".").lower() for m in m_jobs[c].result()[0] if m]
+                if not a_rec and not mx_rec:
+                    continue
+                assets.append({"org_id": o["id"], "kind": "lookalike", "value": c, "source_id": "surface", "first_seen": now, "last_seen": now,
+                               "attrs": {"ips": a_rec[:4], "mx": mx_rec[:4], "rule": prevent.lookalike_rule(bool(mx_rec), bool(a_rec))}})
+
     assets.append({"org_id": o["id"], "kind": "domain", "value": d, "source_id": "surface", "first_seen": now, "last_seen": now,
                    "attrs": {"hygiene": hygiene, "ct_count": len(names), "ct_source": ct_src, "edge": edge[:40],
                              "hostnames_sample": names[:400], "resolved": len(resolved), "owned_asns": sorted(owned_asns),
-                             # certificate details for the hardening checks (CRT-EXPIRY-14, CRT-CAA-VIOLATION) — crt.sh only
-                             **({"ct_certs": hd.ct_recent(certs), "ct_expiring": hd.ct_expiring(certs, names)} if ct_src == "crt.sh" else {})}})
+                             "rdap": rd, "certs": cert_info}})
     return {"assets": assets, "deps": deps}
+
+
+def _carry_caa_policy(oid: str, assets: list[dict]) -> None:
+    """Keep the time this CAA policy was first observed, and resolve which certificates it judges.
+
+    CAA is evaluated by the issuing authority at issuance time, so a certificate predating the
+    current policy says nothing about it. Only certificates issued after AEGIS first saw this
+    exact policy are evaluable; everything else produces no finding. On a fresh database that
+    means the rule stays quiet for weeks, which is correct rather than a fault.
+    """
+    dom = next((a for a in assets if a["kind"] == "domain"), None)
+    cert = (dom or {}).get("attrs", {}).get("certs")
+    if not cert:
+        return
+    old = db.one("SELECT attrs FROM asset WHERE org_id=? AND kind='domain'", (oid,)) or {}
+    prev_certs = ((old.get("attrs") or {}).get("certs")) or {}
+    # an unchanged policy keeps its original first-seen time; a changed one starts again
+    if prev_certs.get("caa_key") and prev_certs.get("caa_key") == cert.get("caa_key") and prev_certs.get("caa_seen"):
+        cert["caa_seen"] = prev_certs["caa_seen"]
+    cert["caa_offenders"] = [c for c in cert.pop("caa_candidates", []) if c.get("issued") and c["issued"] >= cert["caa_seen"]][:5]
 
 
 def store_scan(o: dict, res: dict) -> None:
     c = db.conn()
+    _carry_caa_policy(o["id"], res["assets"])
     # replace the previous snapshot (kept as history in first_seen of carried-over rows)
     prev = {(r["kind"], r["value"]): r["first_seen"] for r in db.q("SELECT kind, value, first_seen FROM asset WHERE org_id=?", (o["id"],))}
     c.execute("DELETE FROM asset WHERE org_id=?", (o["id"],))
@@ -387,35 +502,23 @@ def store_scan(o: dict, res: dict) -> None:
             uniq.append(dpd)
     db.upsert("dependency", uniq)
     db.x("UPDATE org SET deep_scanned=? WHERE id=?", (db.now(), o["id"]))
-    write_snapshot(o["id"], res["assets"])
-
-
-def write_snapshot(org_id: str, assets: list[dict]) -> None:
-    """One row per scan, last 12 kept — the basis for DNS change (possible hijack) detection."""
-    dom = next((a for a in assets if a["kind"] == "domain"), None)
-    if not dom:
-        return
-    h = (dom.get("attrs") or {}).get("hygiene") or {}
-    ips = [a for a in assets if a["kind"] == "ip"]
-    db.upsert("snapshot", {"org_id": org_id, "scanned_at": db.now(), "hostnames": sorted(a["value"] for a in assets if a["kind"] == "hostname")[:400],
-                           "ips": sorted(a["value"] for a in ips)[:200],
-                           "ports": sorted({f"{a['value']}:{p}" for a in ips for p in (a.get("attrs") or {}).get("ports") or []})[:400],
-                           "edge": sorted({e.get("product") for e in (dom.get("attrs") or {}).get("edge") or [] if e.get("product")}),
-                           "ns": sorted(h.get("ns") or []), "mx": sorted(h.get("mx") or []), "dnssec": 1 if h.get("dnssec") else 0,
-                           "caa": sorted(h.get("caa") or [])})
-    db.x("DELETE FROM snapshot WHERE org_id=? AND scanned_at NOT IN (SELECT scanned_at FROM snapshot WHERE org_id=? ORDER BY scanned_at DESC LIMIT 12)",
-         (org_id, org_id))
 
 
 @collector(Source(
     id="surface", name="External attack surface (passive)", category="Attack surface",
-    publisher="Google & Cloudflare DNS-over-HTTPS · crt.sh / Cert Spotter CT logs · Shodan InternetDB · Team Cymru · RIPEstat",
+    publisher="Google & Cloudflare DNS-over-HTTPS · crt.sh / Cert Spotter CT logs · Shodan InternetDB · Team Cymru · RIPEstat · IANA + registry RDAP",
     homepage="https://internetdb.shodan.io/", url="https://dns.google/resolve", cadence_min=15,
-    licence="DoH, CT, RIPEstat, Team Cymru: free · Shodan InternetDB: free for non-commercial use",
+    licence="DoH, CT, RIPEstat, Team Cymru: free · RDAP: registry registration data, published under each registry's terms · "
+            "Shodan InternetDB: free for non-commercial use",
     feeds=[{"publisher": "crt.sh", "url": "https://crt.sh/"}, {"publisher": "Cert Spotter", "url": "https://api.certspotter.com/v1/issuances"},
-           {"publisher": "Shodan InternetDB", "url": "https://internetdb.shodan.io/"}, {"publisher": "RIPEstat", "url": "https://stat.ripe.net/"}],
-    notes="Rotates through monitored organisations (~6 per run, full cycle every few days). Reads public DNS and third-party indexes only — "
-          "no packets are ever sent to the organisation's hosts."))
+           {"publisher": "Shodan InternetDB", "url": "https://internetdb.shodan.io/"}, {"publisher": "RIPEstat", "url": "https://stat.ripe.net/"},
+           {"publisher": "IANA RDAP bootstrap", "url": "https://data.iana.org/rdap/dns.json"}],
+    notes="Rotates through monitored organisations (12 per run, least-recently-scanned first, so the full watchlist is covered in about 14 hours). "
+          "Reads public DNS and third-party indexes only — "
+          "no packets are ever sent to the organisation's hosts. Preventive checks on the same pass: registrar transfer lock and registration "
+          "expiry from the TLD's own RDAP server (resolved through the IANA bootstrap, never by following a redirect); RPKI route-origin "
+          "validation of announced prefixes via RIPEstat; certificate expiry and CAA conformance from the Certificate Transparency response "
+          "already fetched; and lookalike domains generated locally and resolved through public resolvers."))
 def collect_surface() -> int:
     orgs = db.q("SELECT id, name, domain FROM org WHERE tier='watch' AND domain IS NOT NULL ORDER BY deep_scanned IS NOT NULL, deep_scanned LIMIT 12")
 

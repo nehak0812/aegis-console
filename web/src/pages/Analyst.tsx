@@ -4,9 +4,9 @@ import { ResponsiveHeatMap } from '@nivo/heatmap'
 import { ResponsiveBump } from '@nivo/bump'
 import { TrendingUp, Repeat, Sparkles } from 'lucide-react'
 import { useApi, qs } from '../lib/api'
+import { Gloss } from '../lib/glossary'
 import { useRange } from '../App'
-import { PageSources } from '../components/ui'
-import { Card, Stat, Empty, SourceLink, When, Table, Tabs } from '../components/ui'
+import { Card, Stat, Empty, SourceLink, When, Table, Tabs, Seg } from '../components/ui'
 import { HBar } from '../components/charts'
 import { nivoTheme, SERIES, BLUE_RAMP, EMPTY, SURFACE, onFill } from '../lib/chartTheme'
 
@@ -14,11 +14,11 @@ export default function Analyst() {
   const { range } = useRange()
   const nav = useNavigate()
   const [sp, setSp] = useSearchParams()
-  const theme = sp.get('topic') || ''  // not "theme": ?theme= is the colour theme (dark / dim / light)
+  const theme = sp.get('theme') || ''
   const [ent, setEnt] = useState<'actors' | 'vendors' | 'cves'>('actors')
   const [cell, setCell] = useState<{ publisher: string; theme: string } | null>(null)
   const [family, setFamily] = useState('')
-  const { data } = useApi<any>(`/analyst${qs({ days: range, family })}`, 300)
+  const { data } = useApi<any>(`/analyst?days=${range}${family ? `&family=${encodeURIComponent(family)}` : ''}`, 300)
   const { data: items } = useApi<any[]>(theme || cell ? `/items${qs({ theme: cell?.theme || theme, publisher: cell?.publisher, days: range, limit: 60 })}` : null, 300)
   const stats = useMemo(() => {
     const t = data?.themes || []
@@ -28,7 +28,7 @@ export default function Analyst() {
   const hmax = Math.max(1, ...data.matrix.flatMap((r: any) => r.data.map((c: any) => c.y)))
   // sequential single-hue ramp on the dark surface: 0 recedes into the surface, more = brighter blue
   const heatColor = (v: number) => (v ? BLUE_RAMP[Math.min(BLUE_RAMP.length - 1, Math.round((Math.sqrt(v) / Math.sqrt(hmax)) * (BLUE_RAMP.length - 1)))] : EMPTY)
-  const setTheme = (t: string) => { setCell(null); const n = new URLSearchParams(sp); t ? n.set('topic', t) : n.delete('topic'); setSp(n) }
+  const setTheme = (t: string) => { setCell(null); const n = new URLSearchParams(sp); t ? n.set('theme', t) : n.delete('theme'); setSp(n) }
 
   return (
     <div>
@@ -36,7 +36,7 @@ export default function Analyst() {
         <div>
           <div className="eyebrow">Analyst view</div>
           <h2>Key themes, recurring aspects, and who is publishing what</h2>
-          <p>{data.window_items.toLocaleString()} items from vendor research (CrowdStrike, Mandiant, Microsoft, Unit 42, Talos…), government CERTs, security news, dark-web reporting and community channels, tagged by transparent keyword rules. Momentum compares this week with the prior four-week average.</p>
+          <p><Gloss>{data.window_items.toLocaleString()} items from vendor research (CrowdStrike, Mandiant, Microsoft, Unit 42, Talos…), government CERTs, security news, dark-web reporting and community channels, tagged by transparent keyword rules. Momentum compares this week with the prior four-week average.</Gloss></p>
         </div>
       </div>
       <div className="grid g4" style={{ marginBottom: 14 }}>
@@ -73,9 +73,8 @@ export default function Analyst() {
         </Card>
       </div>
 
-      <Card title="Who is publishing what" sub={family ? `publisher × every ${family} theme · click a cell to read them` : 'publisher × theme — top 10 themes plus the leading theme of every family · click a cell to read them'}
-        right={<select className="txt" aria-label="Theme family" value={family} onChange={e => setFamily(e.target.value)}>
-          <option value="">All families</option>{(data.families || []).map((f: string) => <option key={f} value={f}>{f}</option>)}</select>}>
+      <Card title="Who is publishing what" sub="publisher × theme — number of items · click a cell to read them" className=""
+        right={<Seg options={[{ id: '', label: 'All' }, ...(data.families || []).map((f: string) => ({ id: f, label: f }))]} value={family} onChange={setFamily} />}>
         <div style={{ height: Math.max(360, data.matrix.length * 24 + 130) }}>
           <ResponsiveHeatMap data={data.matrix} margin={{ top: 120, right: 20, bottom: 10, left: 220 }}
             axisTop={{ tickRotation: -40, tickSize: 0, tickPadding: 6 }} axisLeft={{ tickSize: 0, tickPadding: 8 }}
@@ -115,7 +114,6 @@ export default function Analyst() {
           { key: 'publisher', label: 'Publisher' }, { key: 'type', label: 'Type', render: (w: any) => <span className="pill">{w.type}</span> },
           { key: 'items', label: 'Items', num: true }, { key: 'focus', label: 'Focus', render: (w: any) => <span className="row wrap" style={{ gap: 4 }}>{w.focus.map((f: string) => <span key={f} className="pill btn" onClick={e => { e.stopPropagation(); setTheme(f) }}>{f}</span>)}</span> }]} />
       </Card>
-      <PageSources cats={['News', 'Research', 'Government', 'Chatter']} />
     </div>
   )
 }

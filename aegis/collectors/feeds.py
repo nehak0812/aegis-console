@@ -90,41 +90,14 @@ PSIRT = [
 ]
 
 
-AI_SEC = [  # AI-vendor misuse reporting and AI-security research (tested 2026-09-11)
-    ("OpenAI (threat & misuse reports)", "https://openai.com/news/rss.xml", False, r"disrupt|malicious use|influence (operation|campaign)|threat|scam|abuse|security"),
-    ("Google safety & security", "https://blog.google/technology/safety-security/rss/"),
-    ("Simon Willison — prompt injection", "https://simonwillison.net/tags/prompt-injection.atom"),
-    ("Embrace The Red", "https://embracethered.com/blog/index.xml"),
-    ("Trail of Bits", "https://blog.trailofbits.com/feed/"),
-    ("Knostic", "https://www.knostic.ai/blog/rss.xml"),
-    ("Backslash Security", "https://www.backslash.security/blog/rss.xml"),
-    ("Adversa AI", "https://adversa.ai/feed/"),
-    ("Legit Security", "https://www.legitsecurity.com/blog/rss.xml"),
-    ("GitGuardian", "https://blog.gitguardian.com/rss/"),
-    ("Aikido Security", "https://www.aikido.dev/blog/rss.xml"),
-    ("Datadog Security Labs", "https://securitylabs.datadoghq.com/rss/feed.xml"),
-    ("OWASP GenAI Security Project", "https://genai.owasp.org/feed/"),
-]
-INFLUENCE = [  # influence operations (FIMI) and fraud reporting — organisation / brand level only
-    ("EUvsDisinfo", "https://euvsdisinfo.eu/feed/"),
-    ("DFRLab", "https://dfrlab.org/feed/", True),
-    ("Cyfluence Research Center", "https://www.cyfluence-research.org/blog-feed.xml"),
-    ("NewsGuard Reality Check", "https://www.newsguardrealitycheck.com/feed"),
-    ("All Eyes On Wagner", "https://alleyesonwagner.org/feed/"),
-    ("FTC press releases", "https://www.ftc.gov/feeds/press-release.xml", False, r"scam|fraud|impersonat|deceptive|data|security|privacy|ai\b"),
-]
-
-
 def _run(source_id: str, feeds, pub_type: str, kind: str, limit: int = 40) -> int:
-    import re
     health = db.kv_get("feed_health", {}) or {}
     total, errs = 0, []
     for f in feeds:
         pub, url = f[0], f[1]
         curl = len(f) > 2 and f[2]
-        frx = re.compile(f[3], re.I) if len(f) > 3 and f[3] else None
         try:
-            n = ingest_feed(source_id, url, pub, pub_type, kind, limit, use_curl=curl, filter_rx=frx)
+            n = ingest_feed(source_id, url, pub, pub_type, kind, limit, use_curl=curl)
             health[url] = {"publisher": pub, "ok": True, "items": n, "at": db.now(), "source": source_id}
             total += n
         except Exception as e:
@@ -179,21 +152,3 @@ def collect_analyst() -> int:
                   feeds=_feeds(PSIRT), notes="Edge-device and platform advisories; linked to CVEs and exposed products."))
 def collect_psirt() -> int:
     return _run("psirt", PSIRT, "Vendor PSIRT", "advisory", 30)
-
-
-@collector(Source(id="pub_ai_sec", name=f"AI-security & AI-misuse reporting ({len(AI_SEC)} feeds)", category="Research",
-                  publisher="OpenAI, Google, Simon Willison, Embrace The Red, Trail of Bits, Knostic, Backslash, Adversa, OWASP GenAI, …",
-                  homepage="https://genai.owasp.org/", cadence_min=180, licence="RSS headline + summary + link", feeds=_feeds(AI_SEC),
-                  notes="AI vendors' misuse/disruption reports and AI-security research (prompt injection, MCP, AI supply chain). "
-                        "Anthropic publishes no feed — see 'Anthropic threat-intelligence reports'."))
-def collect_ai_sec() -> int:
-    return _run("pub_ai_sec", AI_SEC, "AI security research", "research", 25)
-
-
-@collector(Source(id="pub_influence", name=f"Influence-operation & fraud reporting ({len(INFLUENCE)} feeds)", category="Research",
-                  publisher="EUvsDisinfo, DFRLab, Cyfluence Research Center, NewsGuard, All Eyes On Wagner, FTC",
-                  homepage="https://euvsdisinfo.eu/", cadence_min=360, licence="RSS headline + summary + link", feeds=_feeds(INFLUENCE),
-                  notes="Foreign information manipulation (FIMI), brand impersonation in false narratives, and fraud enforcement. "
-                        "Organisation and brand level only — no personas or individuals are stored. DFRLab is fetched with curl."))
-def collect_influence() -> int:
-    return _run("pub_influence", INFLUENCE, "Influence & fraud research", "research", 25)

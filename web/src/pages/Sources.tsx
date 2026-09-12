@@ -1,9 +1,9 @@
 import { Fragment, useState } from 'react'
 import { CheckCircle2, AlertTriangle, PauseCircle, Loader2, Clock, Play, ChevronRight, ChevronDown } from 'lucide-react'
 import { useApi, api } from '../lib/api'
+import { Gloss, gloss } from '../lib/glossary'
 import { Card, Stat, Sev, SourceLink, When, Tabs, Table } from '../components/ui'
 import { Spark } from '../components/charts'
-import { GLOSSARY } from '../components/glossary'
 import { compact } from '../lib/format'
 
 const ST: Record<string, any> = {
@@ -19,7 +19,7 @@ function Status({ s }: { s: string }) {
 export default function Sources() {
   const { data, refetch } = useApi<any>('/sources', 30)
   const { data: method } = useApi<any>('/method', 3600)
-  const [tab, setTab] = useState<'sources' | 'rules' | 'linkage' | 'bitsight' | 'glossary'>('sources')
+  const [tab, setTab] = useState<'sources' | 'rules' | 'linkage' | 'bitsight'>('sources')
   const [open, setOpen] = useState<string | null>(null)
   if (!data) return <div className="muted">Loading sources…</div>
   const cats = Array.from(new Set((data.sources as any[]).map(s => s.category)))
@@ -32,13 +32,13 @@ export default function Sources() {
         <div>
           <div className="eyebrow">Sources & method</div>
           <h2>Where every record comes from, and how levels are decided</h2>
-          <p>Only free, open sources. Collection is passive: public indexes, registries, feeds and DNS — never a scan or a probe of an organisation, never a purchase, never a credential. Each source runs on its own cadence; a failing source is marked degraded rather than filled with anything invented.</p>
+          <p><Gloss>Only free, open sources. Collection is passive: public indexes, registries, feeds and DNS — never a scan or a probe of an organisation, never a purchase, never a credential. Each source runs on its own cadence; a failing source is marked degraded rather than filled with anything invented.</Gloss></p>
         </div>
       </div>
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', marginBottom: 14 }}>
         {[['Organisations', c.orgs], ['Reporting items', c.items], ['Dark-web records', c.leaks], ['Vulnerabilities', c.vulns], ['Threat actors', c.actors], ['Incidents', c.incidents], ['Findings', c.findings], ['Assets', c.assets], ['Provider links', c.dependencies]].map(([l, v]) => <Stat key={l as string} label={l as string} value={compact(v as number)} />)}
       </div>
-      <Tabs value={tab} onChange={setTab} tabs={[{ id: 'sources', label: 'Sources', count: data.sources.length }, { id: 'rules', label: 'Rating rules' }, { id: 'linkage', label: 'Linkage & themes' }, { id: 'bitsight', label: 'Bitsight-style coverage' }, { id: 'glossary', label: 'Glossary' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ id: 'sources', label: 'Sources', count: data.sources.length }, { id: 'rules', label: 'Rating rules' }, { id: 'linkage', label: 'Linkage & themes' }, { id: 'bitsight', label: 'Bitsight-style coverage' }]} />
 
       {tab === 'sources' && cats.map(cat => (
         <Card key={cat} title={cat} className="flush" >
@@ -50,7 +50,7 @@ export default function Sources() {
                   <Fragment key={s.id}>
                     <tr className="click" onClick={() => setOpen(open === s.id ? null : s.id)}>
                       <td>{open === s.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
-                      <td><b>{s.name}</b><div className="muted" style={{ fontSize: 12 }}>{s.publisher}</div></td>
+                      <td><b>{gloss(s.name)}</b><div className="muted" style={{ fontSize: 12 }}>{s.publisher}</div></td>
                       <td><Status s={s.status} /></td>
                       <td>{s.last_ok ? <When ts={s.last_ok} /> : <span className="muted">—</span>}</td>
                       <td className="num">{compact(s.items_last_run)}</td>
@@ -62,7 +62,7 @@ export default function Sources() {
                     {open === s.id && (
                       <tr><td /><td colSpan={8}>
                         <div className="stack" style={{ padding: '4px 0 10px' }}>
-                          <div className="ink2">{s.notes}</div>
+                          <div className="ink2">{gloss(s.notes)}</div>
                           <div className="row wrap" style={{ gap: 10 }}><SourceLink url={s.homepage} label="Homepage" />{s.url && <SourceLink url={s.url} label="Endpoint" />}<span className="muted">access: {s.access}</span></div>
                           {s.last_error && <div className="why" style={{ borderColor: 'var(--high)' }}><b>Last error:</b> {s.last_error}</div>}
                           {s.feed_health?.length > 0 && (
@@ -84,8 +84,8 @@ export default function Sources() {
           <Card title="Four levels, no scores" sub="every level is assigned by exactly one of these rules; hover any level in the console to see its rule">
             <div className="row wrap" style={{ gap: 12 }}>{['critical', 'high', 'medium', 'low'].map(l => <Sev key={l} level={l} />)}<span className="muted">An organisation's level is its most severe active finding (Low findings are inventory and context).</span></div>
           </Card>
-          {['organisation', 'vulnerability', 'incident', 'deadline'].map(a => (
-            <Card key={a} title={`${a[0].toUpperCase() + a.slice(1)} rules`} sub={a === 'deadline' ? 'every Critical / High / Medium finding gets an act-by date from exactly one of these — shorter for classes attackers exploit within days' : undefined}>
+          {['organisation', 'vulnerability', 'incident'].map(a => (
+            <Card key={a} title={`${a[0].toUpperCase() + a.slice(1)} rules`}>
               <Table rows={method.rules.filter((r: any) => r.applies_to === a)} max={100} cols={[
                 { key: 'level', label: 'Level', render: (r: any) => <Sev level={r.level} />, sort: (r: any) => ['critical', 'high', 'medium', 'low'].indexOf(r.level) },
                 { key: 'id', label: 'Rule', render: (r: any) => <span className="mono">{r.id}</span> }, { key: 'rule', label: 'Condition' }]} initialSort={['level', 'asc']} />
@@ -95,7 +95,7 @@ export default function Sources() {
 
       {tab === 'linkage' && method && (
         <div className="grid g2">
-          <Card title="How incidents reach organisations" sub="six explainable linkage types">
+          <Card title="How incidents reach organisations" sub="five explainable linkage types">
             <Table rows={Object.entries(method.link_types).map(([k, v]) => ({ k, v }))} cols={[{ key: 'k', label: 'Type', render: (r: any) => <span className="mono">{r.k}</span> }, { key: 'v', label: 'Meaning' }]} />
             <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>Victim and exposed-CVE links are Critical; subsidiary, provider-breach and exposed-hostname links are High; provider outages Medium; sector targeting Low.</div>
           </Card>
@@ -105,13 +105,6 @@ export default function Sources() {
             </div>
           </Card>
         </div>
-      )}
-
-      {tab === 'glossary' && (
-        <Card title="Glossary" sub="every abbreviation on the console is underlined — hover (or tap) it for this explanation; rule IDs explain themselves the same way">
-          <Table rows={Object.entries(GLOSSARY).map(([term, text]) => ({ term, text }))} max={200} initialSort={['term', 'asc']}
-            cols={[{ key: 'term', label: 'Term', render: (g: any) => <b className="mono">{g.term}</b> }, { key: 'text', label: 'Meaning' }]} />
-        </Card>
       )}
 
       {tab === 'bitsight' && method && (

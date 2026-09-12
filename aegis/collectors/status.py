@@ -1,12 +1,10 @@
 """Third-party provider service incidents (public status pages) — the 'shared provider' side of linkage."""
-import re
 from datetime import datetime, timedelta, timezone
 
 import feedparser
 
 from aegis import db, net
 from aegis.collectors.rss import entry_date, item_id, store_items, strip_html
-from aegis.intel.providers import STATUS_FEEDS
 from aegis.registry import Source, collector
 
 STATUSPAGE = [  # vendor, Statuspage v2 base
@@ -16,7 +14,8 @@ STATUSPAGE = [  # vendor, Statuspage v2 base
     ("Snowflake", "https://status.snowflake.com"), ("Dropbox", "https://status.dropbox.com"),
     ("Box", "https://status.box.com"), ("Akamai", "https://www.akamaistatus.com"),
     ("DigitalOcean", "https://status.digitalocean.com"), ("HubSpot", "https://status.hubspot.com"),
-    # generative-AI providers — names match dependency.vendor from DNS verification records
+    # generative-AI providers. The vendor strings must match fingerprints.py exactly so they join
+    # with the DNS evidence in dependency.vendor: "OpenAI" and "Anthropic", never "Claude".
     ("OpenAI", "https://status.openai.com"), ("Anthropic", "https://status.claude.com"),
 ]
 RSS = [("AWS", "https://status.aws.amazon.com/rss/all.rss"), ("Zscaler", "https://trust.zscaler.com/rss-feed")]
@@ -30,11 +29,8 @@ IMPACT = {"critical": "high", "major": "medium", "minor": "low", "none": "low", 
     feeds=[{"publisher": v, "url": u + "/api/v2/incidents.json"} for v, u in STATUSPAGE] + [{"publisher": v, "url": u} for v, u in RSS]
     + [{"publisher": "Slack", "url": "https://slack-status.com/api/v2.0.0/history"},
        {"publisher": "Salesforce", "url": "https://api.status.salesforce.com/v1/incidents"},
-       {"publisher": "Google Cloud", "url": "https://status.cloud.google.com/incidents.json"}]
-    + [{"publisher": v, "url": u} for v, (u, _) in STATUS_FEEDS.items()],
-    notes="Outages and degradations at shared SaaS / cloud / CDN / data-platform providers (60+ feeds, incl. the provider catalogue's "
-          "tested feeds: Databricks, MongoDB, Confluent, Splunk, Stripe, MOVEit Cloud, Kaseya, Change Healthcare …). Linked to organisations "
-          "whose DNS shows they depend on the provider."))
+       {"publisher": "Google Cloud", "url": "https://status.cloud.google.com/incidents.json"}],
+    notes="Outages and degradations at shared SaaS / cloud / CDN providers. Linked to organisations whose DNS shows they depend on the provider."))
 def collect_status() -> int:
     since = datetime.now(timezone.utc) - timedelta(days=30)
     rows, errs = [], []
@@ -59,19 +55,6 @@ def collect_status() -> int:
             for i in (net.get_json(base + "/api/v2/incidents.json", timeout=20) or {}).get("incidents", [])[:25]:
                 upd = (i.get("incident_updates") or [{}])[0].get("body", "")
                 add(vendor, i.get("name", ""), i.get("shortlink") or base, z(i.get("created_at")), i.get("impact"), upd)
-        except Exception as e:
-            errs.append(f"{vendor}: {e}")
-    for vendor, (url, kind) in STATUS_FEEDS.items():  # provider catalogue feeds
-        try:
-            if kind == "statuspage":
-                for i in (net.get_json(url, timeout=20) or {}).get("incidents", [])[:25]:
-                    upd = (i.get("incident_updates") or [{}])[0].get("body", "")
-                    add(vendor, i.get("name", ""), i.get("shortlink") or url.split("/api/")[0], z(i.get("created_at")), i.get("impact"), upd)
-            else:
-                for e in feedparser.parse(net.get(url, timeout=20).content).entries[:25]:
-                    t = e.get("title", "")
-                    imp = "major" if re.search(r"outage|unavailable|down\b|major", t, re.I) else "minor"
-                    add(vendor, t, e.get("link") or url, entry_date(e), imp, e.get("summary", ""))
         except Exception as e:
             errs.append(f"{vendor}: {e}")
     for vendor, url in RSS:

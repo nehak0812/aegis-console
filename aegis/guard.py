@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 ALLOWED_SUFFIXES = {
     # registries & identity
     "sec.gov", "gleif.org", "wikidata.org", "githubusercontent.com", "github.com",
+    "iana.org",  # RDAP bootstrap: the authoritative TLD -> RDAP server map
     # vulnerabilities & exploitation
     "cisa.gov", "first.org", "nist.gov", "osv.dev", "empiricalsecurity.com", "cyentia.com", "exploit-db.com",
     "gitlab.com", "msrc.microsoft.com",
@@ -30,15 +31,6 @@ ALLOWED_SUFFIXES = {
     # threat intel, research, government, news RSS
     "mitre.org", "attack.mitre.org", "incidentdatabase.ai", "airisk.mit.edu", "docs.google.com",
     "oecd.ai", "sans.edu",
-    # v2.2 — AI-era threats: report indicators, phishing / new-domain feeds, AI stack advisories, AI provider status
-    "anthropic.com", "circl.lu", "botvrij.eu", "whoisds.com", "phishtank.com", "osv-vulnerabilities.storage.googleapis.com",
-    "status.openai.com", "status.claude.com",
-    # domain hardening (DOM-* rules): IANA RDAP bootstrap + the registry RDAP servers AEGIS's domains need (verified Sept 2026).
-    # Requests go straight to the bootstrap-listed server — never via the rdap.org redirector.
-    "data.iana.org", "rdap.verisign.com", "rdap.publicinterestregistry.org", "rdap.nominet.uk", "rdap.centralnic.com",
-    "rdap.nic.fr", "rdap.denic.de",
-    # supplier intelligence: US ITA Consolidated Screening List, UK FCDO Sanctions List (entity rows only; verified Sept 2026)
-    "data.trade.gov", "sanctionslist.fcdo.gov.uk",
 }
 
 _extra_allowed: set[str] = set()

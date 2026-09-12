@@ -1,32 +1,102 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { ResponsiveTreeMap } from '@nivo/treemap'
+import { ResponsiveCirclePacking } from '@nivo/circle-packing'
 import { RefreshCw, CheckCircle2, XCircle, MinusCircle, ExternalLink } from 'lucide-react'
 import { useApi, api } from '../lib/api'
-import { Card, Sev, Why, Empty, When, SourceLink, Tabs, Table, SevCounts, Stat, useRules, ActBy } from '../components/ui'
-import { HBar, Columns, StackedArea } from '../components/charts'
-import { ActionTable } from '../components/actions'
-import { OrgBrief } from '../components/brief'
-import { SEV_COLOR, SERIES, nivoTheme, EMPTY, SURFACE, onFill, INK, INK2 } from '../lib/chartTheme'
+import { Card, Sev, Conf, Why, Empty, When, SourceLink, Tabs, Table, SevCounts, Stat, useRules, usePlaybooks } from '../components/ui'
+import { HBar, Columns } from '../components/charts'
+import { gloss } from '../lib/glossary'
+import { SEV_COLOR, SERIES, nivoTheme, EMPTY, SURFACE, onFill } from '../lib/chartTheme'
 import { countryName, day, compact } from '../lib/format'
 
-type Tab = 'summary' | 'assets' | 'third' | 'exposure' | 'compromise' | 'events' | 'impersonation' | 'hygiene' | 'findings' | 'prevent'
+type Tab = 'summary' | 'prevent' | 'assets' | 'third' | 'exposure' | 'compromise' | 'events' | 'hygiene' | 'findings'
 const CAT_TAB: Record<string, Tab> = { footprint: 'assets', critical: 'assets', cloud: 'assets', software: 'third', exposure: 'exposure', vulns: 'exposure',
-  compromise: 'compromise', darkweb: 'events', chatter: 'events', hygiene: 'hygiene', disclosure: 'events', ai: 'events', impersonation: 'impersonation' }
-const LT: Record<string, string> = { DIRECT: 'Named victim', GROUP: 'Corporate group', DEPENDENCY: 'Provider dependency', EXPOSED_PRODUCT: 'Exposed product', NAMED_CUSTOMER: 'Named customer', TARGETING: 'Sector targeting' }
+  compromise: 'compromise', darkweb: 'events', chatter: 'events', hygiene: 'hygiene', disclosure: 'events', ai: 'events' }
+const LT: Record<string, string> = { DIRECT: 'Named victim', GROUP: 'Corporate group', DEPENDENCY: 'Provider dependency', EXPOSED_PRODUCT: 'Exposed product', TARGETING: 'Sector targeting' }
 
-function Check({ ok, warn, label, detail, url }: { ok: boolean; warn?: boolean; label: string; detail?: string; url?: string }) {
+function Check({ ok, warn, label, detail, url, state, linkLabel }:
+  { ok: boolean; warn?: boolean; label: string; detail?: string; url?: string; state?: string; linkLabel?: string }) {
   const Icon = ok ? CheckCircle2 : warn ? MinusCircle : XCircle
   const color = ok ? 'var(--good)' : warn ? 'var(--medium)' : 'var(--high)'
   return (
     <div className="feed-item" style={{ gridTemplateColumns: 'auto 1fr auto' }}>
       <Icon size={16} color={color} />
-      <div><div className="t">{label} <span className="muted" style={{ fontWeight: 400 }}>· {ok ? 'present' : warn ? 'partial' : 'missing'}</span></div>{detail && <div className="m mono" style={{ wordBreak: 'break-all' }}>{detail}</div>}</div>
-      {url ? <SourceLink url={url} label="DNS record" /> : <span />}
+      <div><div className="t">{gloss(label)} <span className="muted" style={{ fontWeight: 400 }}>· {state || (ok ? 'present' : warn ? 'partial' : 'missing')}</span></div>{detail && <div className="m mono" style={{ wordBreak: 'break-all' }}>{detail}</div>}</div>
+      {url ? <SourceLink url={url} label={linkLabel || 'DNS record'} /> : <span />}
     </div>
   )
 }
+
+const STATUS_LABEL: Record<string, string> = {
+  new: 'New', acknowledged: 'Acknowledged', in_progress: 'In progress',
+  resolved: 'Resolved', accepted_risk: 'Accepted risk', false_positive: 'False positive',
+}
+
+/** One action: what it prevents, who owns it, when it is due, and how to move it along. */
+function Action({ a, onChanged }: { a: any; onChanged: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const book = a.playbook
+  const move = async (status: string) => {
+    // the server requires these where the change suppresses a finding that is still true
+    const needsReason = status === 'accepted_risk' || status === 'false_positive'
+    const reason = needsReason ? window.prompt(`Why is this ${STATUS_LABEL[status].toLowerCase()}?`) : null
+    if (needsReason && !reason) return
+    const expires = status === 'accepted_risk' ? window.prompt('Accepted until when? (YYYY-MM-DD)') : null
+    if (status === 'accepted_risk' && !expires) return
+    const by = window.prompt('Your name, for the history') || ''
+    setBusy(true); setErr('')
+    try {
+      await api(`/actions/${a.id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, reason, expires, by }) })
+      onChanged()
+    } catch (e: any) { setErr(String(e.message || e)) } finally { setBusy(false) }
+  }
+  const next: string[] = a.status === 'new' ? ['acknowledged', 'in_progress', 'accepted_risk', 'false_positive']
+    : a.status === 'acknowledged' ? ['in_progress', 'accepted_risk', 'false_positive']
+      : a.status === 'in_progress' ? ['accepted_risk', 'false_positive'] : []
+  return (
+    <div className="feed-item" style={{ gridTemplateColumns: '1fr', gap: 6 }}>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <Sev level={a.level} rule={a.rule_id} />
+        <Conf level={a.confidence} />
+        <b style={{ flex: 1, minWidth: 180 }}>{a.title}</b>
+        {a.owner_role && <span className="pill">{a.owner_role}</span>}
+        {book && <span className="pill" title={`about ${book.effort_label}`}>{book.effort}</span>}
+        <span className={`pill${a.overdue ? '' : ''}`} style={a.overdue ? { color: 'var(--high)' } : undefined}>
+          {STATUS_LABEL[a.status] || a.status}{a.due ? ` · due ${String(a.due).slice(0, 10)}` : ''}{a.overdue ? ' · overdue' : ''}
+        </span>
+        <button className="pill btn" onClick={() => setOpen(o => !o)}>{open ? 'Hide' : 'How to fix'}</button>
+      </div>
+      {book && <div className="m" style={{ color: 'var(--ink-2)' }}><b>Prevents:</b> {gloss(book.prevents)}</div>}
+      {a.reopened > 0 && <div className="m" style={{ color: 'var(--medium)' }}>Reopened {a.reopened}× — the finding came back after being closed.</div>}
+      {a.verified_closed_at && <div className="m muted">Verified closed {String(a.verified_closed_at).slice(0, 10)} — the finding is no longer produced.</div>}
+      {open && (
+        <div className="stack" style={{ gap: 6, paddingLeft: 4, borderLeft: '2px solid var(--hair-2)', marginLeft: 2 }}>
+          {book && <ol style={{ margin: 0, paddingLeft: 18 }}>{book.steps.map((st: string, i: number) => <li key={i} style={{ marginBottom: 3 }}>{gloss(st)}</li>)}</ol>}
+          {book?.controls?.length > 0 && <div className="m muted">Indicative control references: {book.controls.join(' · ')}</div>}
+          {next.length > 0 && (
+            <div className="row wrap" style={{ gap: 6 }}>
+              <span className="m muted">Move to:</span>
+              {next.map(st => <button key={st} className="pill btn" disabled={busy} onClick={() => move(st)}>{STATUS_LABEL[st]}</button>)}
+            </div>
+          )}
+          {err && <div className="m" style={{ color: 'var(--critical)' }}>{err}</div>}
+          {(a.history || []).length > 0 && (
+            <div className="m muted">{(a.history as any[]).slice(-3).map((h, i) =>
+              <div key={i}>{String(h.at).slice(0, 10)} · {STATUS_LABEL[h.status] || h.status} · {h.by}{h.reason ? ` — ${h.reason}` : ''}</div>)}</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// preventable findings are ordered worst-first, then by how much work the fix is
+const SEV_RANK = ['critical', 'high', 'medium', 'low']
+const EFFORT_ORDER: Record<string, number> = { S: 0, M: 1, L: 2 }
 
 function FindingList({ rows, empty }: { rows: any[]; empty?: string }) {
   if (!rows.length) return <Empty>{empty || 'No findings in this category.'}</Empty>
@@ -36,12 +106,10 @@ function FindingList({ rows, empty }: { rows: any[]; empty?: string }) {
         <div key={f.id} className="feed-item" style={{ gridTemplateColumns: 'auto 1fr auto' }}>
           <Sev level={f.severity} rule={f.rule_id} />
           <div>
-            <div className="t">{f.title}</div>
+            <div className="t">{f.title} <Conf level={f.confidence} /></div>
             {f.detail && <div className="m">{f.detail}</div>}
             <div style={{ marginTop: 6 }}><Why rule={f.rule_id} level={f.severity} /></div>
-            <div className="m" style={{ marginTop: 4 }}><ActBy ts={f.act_by} rule={f.deadline_rule} />
-              {f.data?.exploited_since && <span title="CISA KEV addition date of the CVE involved">exploited since {day(f.data.exploited_since)}{f.data.fastest_lag != null ? ` (${f.data.fastest_lag <= 0 ? 'zero-day' : f.data.fastest_lag + 'd after disclosure'})` : ''}</span>}
-              <span>observed {day(f.observed)}</span><span>first seen <When ts={f.first_seen} /></span><span className="mono">{f.source_id}</span></div>
+            <div className="m" style={{ marginTop: 4 }}><span>observed {day(f.observed)}</span><span>first seen <When ts={f.first_seen} /></span><span className="mono">{f.source_id}</span></div>
           </div>
           {f.evidence_url?.startsWith('http') ? <SourceLink url={f.evidence_url} /> : f.evidence_url?.startsWith('/') ? <a className="srclink" href={f.evidence_url}>Open</a> : <span />}
         </div>
@@ -54,7 +122,7 @@ export default function OrgDetail() {
   const { id } = useParams()
   const nav = useNavigate()
   const { data, refetch } = useApi<any>(`/orgs/${id}`, 90)
-  const [tab, setTab] = useState<Tab>((new URLSearchParams(window.location.search).get('tab') as Tab) || 'summary')  // deep link: ?tab=impersonation
+  const [tab, setTab] = useState<Tab>('summary')
   const [cat, setCat] = useState<string | null>(null)
   const [queued, setQueued] = useState(false)
   useRules()
@@ -63,15 +131,26 @@ export default function OrgDetail() {
     for (const f of data?.findings || []) (m[f.category] ||= []).push(f)
     return m
   }, [data])
+  // every hook must run before the loading return below, or the hook count changes between renders
+  const acts: any[] = useMemo(() => (data?.actions as any[]) || [], [data])
+  const openActs = useMemo(() => acts.filter(a => a.open), [acts])
+  const byOwner = useMemo(() => {
+    const m: Record<string, any[]> = {}
+    for (const a of openActs) (m[a.owner_role || 'Unassigned'] ||= []).push(a)
+    return Object.entries(m).sort((a, b) => b[1].length - a[1].length)
+  }, [openActs])
   if (!data) return <div className="muted">Loading organisation…</div>
   const o = data.org, p = data.posture, fp = data.footprint
   const scanned = !!fp.scanned
   const catFindings = (cats: string[]) => (data.findings as any[]).filter(f => cats.includes(f.category))
-  const depCats = Object.keys(data.dependencies)
-  const catColor = (c: string) => SERIES[Math.max(0, depCats.indexOf(c)) % SERIES.length] || EMPTY
-  const tpTree = { id: 'deps', children: Object.entries(data.dependencies).map(([c, vs]: any) => ({ id: c, children: vs.map((v: any) => ({ id: `${v.vendor}`, value: 1, n: v.evidence.length, cat: c, issue: data.provider_issues?.[v.vendor] })) })) }  // one equal tile per provider, so every label fits; record counts are in the tooltip and evidence panel
+  const packing = { id: 'deps', children: Object.entries(data.dependencies).map(([c, vs]: any, i) => ({ id: c, color: SERIES[i % SERIES.length], children: vs.map((v: any) => ({ id: `${v.vendor}`, value: v.evidence.length + 1, cat: c, color: SERIES[i % SERIES.length] })) })) }
   const hy = fp.domain?.attrs?.hygiene || {}
   const d = fp.domain?.value || o.domain
+  const rdap = fp.domain?.attrs?.rdap || null
+  const rdapUrl = d ? `https://rdap.org/domain/${d}` : undefined
+  const expiryDays = rdap?.expires ? Math.floor((Date.parse(rdap.expires) - Date.now()) / 86400000) : null
+  const lookalikes: any[] = fp.lookalikes || []
+  const prevent = data.prevent || { scanned: false, controls: [] }
   const dohUrl = (n: string, t: string) => `https://dns.google/resolve?name=${n}&type=${t}`
   const stealer = data.leaks.find((l: any) => l.kind === 'stealer')
 
@@ -125,101 +204,24 @@ export default function OrgDetail() {
       </div>
 
       <Tabs value={tab} onChange={t => { setTab(t); setCat(null) }} tabs={[
-        { id: 'summary', label: 'Overview' }, { id: 'assets', label: 'Assets & cloud' }, { id: 'third', label: 'Software & third parties' },
+        { id: 'summary', label: 'Overview' }, { id: 'prevent', label: 'Prevent' }, { id: 'assets', label: 'Assets & cloud' }, { id: 'third', label: 'Software & third parties' },
         { id: 'exposure', label: 'Exposure & vulnerabilities' }, { id: 'compromise', label: 'Compromised IPs' }, { id: 'events', label: 'Dark web & incidents' },
-        { id: 'impersonation', label: 'Impersonation', count: data.impersonation?.total || undefined },
-        { id: 'hygiene', label: 'Email & domain' }, { id: 'prevent', label: 'Prevent & actions', count: (data.actions || []).filter((a: any) => a.open).length || undefined },
-        { id: 'findings', label: 'All findings', count: data.findings.length }]} />
+        { id: 'hygiene', label: 'Email & domain' }, { id: 'findings', label: 'All findings', count: data.findings.length }]} />
 
-      {tab === 'impersonation' && (() => {
-        const im = data.impersonation || {}
-        const SRC = ['Threat-report indicator', 'Newly registered domain', 'Phishing feed', 'Malware / C2 feed']
-        return (
-          <div className="stack" style={{ gap: 14 }}>
-            <div className="grid g4">
-              <Stat label="Lookalike domains" value={im.total || 0} hint="from threat reports, new registrations and feeds" />
-              <Stat label="Still resolving" value={im.live || 0} hint="public DNS check — block these first" />
-              <Stat label="New in the last 30 days" value={im.new_30d || 0} hint="registered or published" />
-              <Stat label="PhishTank pages targeting the brand" value={im.phishtank || 0} hint={im.phishtank_url ? <SourceLink url={im.phishtank_url} label="example" /> : 'verified and online'} />
-            </div>
-            <div className="grid g-main-side">
-              <Card title="Impersonation findings" sub="each with the rule and the matching reason">
-                <FindingList rows={catFindings(['impersonation'])} empty="No lookalike of this brand in threat reports, new registrations or phishing feeds. The daily new-domain list samples generic TLDs only." />
-              </Card>
-              <div className="stack" style={{ gap: 14 }}>
-                <Card title="Lures used against this brand" sub="what the lookalikes pretend to be">
-                  {(im.lures || []).length ? <HBar data={im.lures} label="lure" value="n" /> : <Empty>None.</Empty>}
-                </Card>
-                <Card title="Where they come from">
-                  {(im.sources || []).length ? <HBar data={im.sources} label="source" value="n" colorFn={(d: any) => SERIES[SRC.indexOf(d.source) % SERIES.length]} /> : <Empty>None.</Empty>}
-                </Card>
-              </div>
-            </div>
-            {(im.rows || []).length > 0 && (
-              <>
-                <div className="grid g2">
-                  <Card title="Lookalikes over time" sub="12 weeks, by source">
-                    <StackedArea data={im.timeline} keys={im.timeline_keys} xKey="week" height={200} colors={im.timeline_keys.map((k: string) => SERIES[SRC.indexOf(k) % SERIES.length])} />
-                  </Card>
-                  <Card title="Top-level domains used"><HBar data={im.tlds} label="tld" value="n" /></Card>
-                </div>
-                <Card title="Every lookalike of this brand" sub="pre-block in mail and web gateways; request takedown of resolving ones"
-                  right={<a className="btn" href={`/api/iocs/export?days=3650&org=${o.id}`}><ExternalLink size={12} />Blocklist CSV</a>}>
-                  <Table rows={im.rows} max={200} cols={[
-                    { key: 'host', label: 'Domain', render: (r: any) => <span className="mono">{r.host}</span> },
-                    { key: 'source', label: 'Source', render: (r: any) => <span className="pill"><span className="dot" style={{ background: SERIES[SRC.indexOf(r.source) % SERIES.length] }} />{r.source}</span> },
-                    { key: 'lure', label: 'Lure theme' },
-                    { key: 'live', label: 'Resolves', render: (r: any) => (r.checked ? (r.live ? <b>yes</b> : 'no') : <span className="muted">not checked</span>), sort: (r: any) => (r.live ? 1 : 0) },
-                    { key: 'publisher', label: 'Reported by', render: (r: any) => <span className="muted">{r.publisher}</span> },
-                    { key: 'published', label: 'Date', render: (r: any) => day(r.published) }]} />
-                </Card>
-              </>)}
-          </div>
-        )
-      })()}
-
-      {tab === 'summary' && <div style={{ marginBottom: 14 }}><OrgBrief id={id!} showOpen={false} /></div>}
       {tab === 'summary' && (
         <div className="grid g2">
+          <Card title="Why this level" sub="the most severe active findings and the rule behind each">
+            <FindingList rows={data.findings.filter((f: any) => f.severity !== 'low').slice(0, 6)} empty="No Critical, High or Medium findings." />
+          </Card>
           <div className="stack" style={{ gap: 14 }}>
-            <Card title="Act first" sub="open findings by their act-by date — the deadline rule reflects how fast attackers exploit each class">
-              {(() => {
-                const due = (data.findings as any[]).filter(f => f.act_by).sort((a, b) => a.act_by.localeCompare(b.act_by)).slice(0, 8)
-                return due.length ? (
-                  <div className="feed">{due.map(f => (
-                    <div key={f.id} className="feed-item" style={{ gridTemplateColumns: 'auto 1fr auto' }}>
-                      <ActBy ts={f.act_by} rule={f.deadline_rule} />
-                      <div><div className="t clamp2">{f.title}</div><div className="m"><Sev level={f.severity} rule={f.rule_id} compact /><span className="mono">{f.rule_id}</span></div></div>
-                      {f.evidence_url?.startsWith('http') ? <SourceLink url={f.evidence_url} /> : <span />}
-                    </div>))}</div>) : <Empty>No open Critical, High or Medium finding.</Empty>
-              })()}
-            </Card>
-            <Card title="Why this level" sub="the most severe active findings and the rule behind each">
-              <FindingList rows={data.findings.filter((f: any) => f.severity !== 'low').slice(0, 6)} empty="No Critical, High or Medium findings." />
-            </Card>
-          </div>
-          <div className="stack" style={{ gap: 14 }}>
-            <Card title="Incidents that could reach this organisation" sub="fastest-moving first — spreading, or exploited within 7 days of disclosure · from the Incidents & impact linkage"
-              right={data.impacts.some((m: any) => m.fast) ? <a className="srclink" onClick={() => nav('/speed')}>Speed & spread →</a> : undefined}>
+            <Card title="Incidents that could reach this organisation" sub="from the Incidents & impact linkage">
               {!data.impacts.length ? <Empty>Not linked to any current incident.</Empty> : (
                 <div className="feed">{data.impacts.slice(0, 10).map((m: any, i: number) => (
                   <div key={i} className="feed-item clickable" style={{ gridTemplateColumns: 'auto 1fr' }} onClick={() => nav(`/incidents/${m.id}`)}>
                     <Sev level={m.severity} compact />
-                    <div><div className="t clamp2">{m.title}</div>
-                      <div className="m"><span className="pill">{LT[m.link_type]}</span>
-                        {m.velocity?.spreading && <span className="pill" title="3+ independent publishers within 72 hours of the first report">spreading · {m.velocity.publishers_72h} publishers in 72h</span>}
-                        {m.velocity?.kev_lag != null && m.velocity.kev_lag <= 7 && <span className="pill" title="CVE disclosure → CISA KEV">{m.velocity.kev_lag <= 0 ? 'zero-day' : `exploited ${m.velocity.kev_lag}d after disclosure`}</span>}
-                        <When ts={m.last_seen} /></div>
-                      <div className="m"><span className="clamp2">{m.reason}</span></div></div>
+                    <div><div className="t clamp2">{m.title}</div><div className="m"><span className="pill">{LT[m.link_type]}</span><span className="clamp2">{m.reason}</span><When ts={m.last_seen} /></div></div>
                   </div>))}</div>)}
             </Card>
-            {data.identity?.providers?.length > 0 && (
-              <Card title="Identity attacks in current reporting" sub={`context, not a finding — public DNS shows ${data.identity.providers.join(', ')}`}>
-                {!data.identity.items.length ? <Empty>No device-code, token-theft or MFA-bypass reporting in the last 30 days.</Empty> : (
-                  <div className="feed">{data.identity.items.slice(0, 5).map((i: any) => (
-                    <div key={i.id} className="feed-item"><span className="pill">{i.publisher}</span><div><div className="t clamp2">{i.title}</div><div className="m"><When ts={i.published} /></div></div><SourceLink url={i.url} /></div>))}</div>)}
-                <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>Preventive checks: block the device-code flow where it is not needed (Conditional Access), enable token protection and sign-in risk policies, and review OAuth app consents.</div>
-              </Card>)}
             <Card title="Critical assets" sub="internet-facing identity, remote-access, mail, file-transfer, admin and customer systems (from public DNS / CT)">
               {!data.critical_assets.length ? <Empty>{scanned ? 'None identified from public hostnames.' : 'Available after the first surface scan.'}</Empty> : (
                 <Table rows={data.critical_assets} max={12} cols={[
@@ -237,6 +239,43 @@ export default function OrgDetail() {
                 </div>)}
             </Card>
           </div>
+        </div>
+      )}
+
+      {tab === 'prevent' && (
+        <div className="stack" style={{ gap: 14 }}>
+          <div className="grid g4">
+            <Stat label="Open actions" value={openActs.length} hint="Critical, High and Medium — Low stays inventory" />
+            <Stat label="Overdue" value={openActs.filter(a => a.overdue).length} hint="past the due date for their level" />
+            <Stat label="Quick wins" value={openActs.filter(a => a.playbook?.effort === 'S').length} hint="hours of work, not days" />
+            <Stat label="Verified closed" value={acts.filter(a => a.verified_closed_at).length} hint="proved fixed by a later scan" />
+          </div>
+
+          <Card title="Controls, next to peers in the same sector"
+            sub="adoption among monitored organisations — context for whether a gap is unusual or normal">
+            {!prevent.scanned ? <Empty>Awaiting scan.</Empty> : (
+              <Table rows={prevent.controls} max={20} cols={[
+                { key: 'label', label: 'Control' },
+                { key: 'prevents', label: 'Prevents', render: (c: any) => <span className="muted">{gloss(c.prevents)}</span> },
+                { key: 'has', label: 'This organisation', width: 145, render: (c: any) => !c.measured
+                  ? <span className="muted" title="This check has not run for this organisation yet — it is not a finding either way">not checked yet</span>
+                  : c.has ? <span className="pill">in place</span>
+                    : <span className="pill" style={{ color: 'var(--medium)' }}>not in place</span> },
+                { key: 'sector_pct', label: 'Sector', width: 120, num: true,
+                  render: (c: any) => c.sector_pct === null || c.sector_pct === undefined ? <span className="muted">—</span>
+                    : <span title={`${c.sector_pct}% of ${c.sector_n} monitored ${c.sector} organisations`}>{c.sector_pct}%</span> },
+                { key: 'estate_pct', label: 'All monitored', width: 130, num: true,
+                  render: (c: any) => c.estate_pct === null || c.estate_pct === undefined
+                    ? <span className="muted">—</span> : <span className="muted">{c.estate_pct}%</span> },
+              ]} />)}
+          </Card>
+
+          {byOwner.map(([owner, rows]) => (
+            <Card key={owner} title={owner} sub={`${rows.length} open${rows.filter((r: any) => r.overdue).length ? ` · ${rows.filter((r: any) => r.overdue).length} overdue` : ''}`}>
+              <div className="feed">{rows.map((a: any) => <Action key={a.id} a={a} onChanged={refetch} />)}</div>
+            </Card>
+          ))}
+          {!openActs.length && <Card><Empty>No open actions. Low findings stay as inventory rather than becoming work.</Empty></Card>}
         </div>
       )}
 
@@ -267,7 +306,12 @@ export default function OrgDetail() {
           </Card>
           <div className="grid g2">
             <Card title="Owned & declared IP space" sub="used to attribute compromised-IP listings">
-              <Table rows={fp.prefixes} max={80} empty="No owned ranges identified." cols={[{ key: 'cidr', label: 'Range', render: (r: any) => <span className="mono">{r.cidr}</span> }, { key: 'provenance', label: 'Why it is attributed' }]} />
+              <Table rows={fp.prefixes} max={80} empty="No owned ranges identified." cols={[
+                { key: 'cidr', label: 'Range', render: (r: any) => <span className="mono">{r.cidr}</span> },
+                { key: 'rpki', label: 'RPKI', width: 130, render: (r: any) => !r.rpki ? <span className="muted" title="Only prefixes announced by an ASN registered to this organisation are validated">—</span>
+                  : r.rpki === 'valid' ? <span className="pill">valid</span>
+                    : <Sev level={r.rpki === 'invalid' ? 'high' : 'medium'} rule={r.rpki === 'invalid' ? 'BGP-RPKI-INVALID' : 'BGP-RPKI-NONE'} /> },
+                { key: 'provenance', label: 'Why it is attributed' }]} />
             </Card>
             <Card title="Corporate group (GLEIF Level 2)" sub={fp.parent ? `Ultimate parent: ${fp.parent.name}` : 'direct subsidiaries'}>
               <Table rows={fp.subsidiaries} max={80} empty="No subsidiary records (or not yet collected)." cols={[
@@ -280,33 +324,15 @@ export default function OrgDetail() {
 
       {tab === 'third' && (
         <div className="grid g-main-side">
-          <Card title="Software, services & third parties" sub="every tile is a provider evidenced in public DNS (MX, NS, SPF, TXT verification, CNAME), one tile per provider, grouped under its category · ⚠ + outline = an active issue at that provider reaching this organisation · click for the issue, or for the other monitored organisations that use it">
+          <Card title="Software, services & third parties" sub="every bubble is a provider evidenced in public DNS (MX, NS, SPF, TXT verification, CNAME) — size = number of records">
             {Object.keys(data.dependencies).length ? (
-              <>
-                <div style={{ height: 520 }}>
-                  <ResponsiveTreeMap data={tpTree as any} identity="id" value="value" leavesOnly={false} innerPadding={4} outerPadding={4}
-                    enableParentLabel parentLabelPosition="top" parentLabelSize={20} parentLabelPadding={6} parentLabelTextColor={INK2 as any}
-                    parentLabel={(n: any) => (n.id === 'deps' ? '' : n.id)} orientLabel={false}
-                    label={(n: any) => (n.data?.issue ? `⚠ ${n.id}` : n.id)} labelSkipSize={34}
-                    colors={(n: any) => (n.data?.cat ? catColor(n.data.cat) : EMPTY)} nodeOpacity={1}
-                    borderWidth={2} borderColor={((n: any) => (n.data?.issue ? INK : SURFACE)) as any}
-                    labelTextColor={((n: any) => onFill(n.color)) as any} theme={nivoTheme as any} animate motionConfig="gentle"
-                    onClick={(n: any) => { if (!n.data?.cat) return; n.data.issue ? nav(`/incidents/${n.data.issue.id}`) : nav(`/orgs?provider=${encodeURIComponent(n.id)}`) }}
-                    tooltip={({ node }: any) => (node.data?.cat ? <div className="tip"><strong>{node.id}</strong><div>{node.data.cat} · {node.data.n} DNS record{node.data.n === 1 ? '' : 's'}</div>
-                      {node.data.issue ? <div><Sev level={node.data.issue.severity} /> {node.data.issue.title}</div> : <div className="muted">click: other monitored organisations using it</div>}</div>
-                      : <div className="tip"><strong>{node.id}</strong></div>)} />
-                </div>
-                {Object.keys(data.provider_issues || {}).length > 0 && (
-                  <div style={{ marginTop: 12 }}>
-                    <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Active issues at this organisation's providers</div>
-                    <div className="feed">{Object.entries(data.provider_issues).map(([v, p]: any) => (
-                      <div key={v} className="feed-item clickable" style={{ gridTemplateColumns: 'auto 1fr' }} onClick={() => nav(`/incidents/${p.id}`)}>
-                        <Sev level={p.severity} compact />
-                        <div><div className="t clamp2"><b>{v}</b> — {p.title}</div><div className="m"><span className="pill">{p.kind}</span>
-                          <a className="srclink" onClick={e => { e.stopPropagation(); nav(`/orgs?provider=${encodeURIComponent(v)}`) }}>other organisations using {v}</a></div></div>
-                      </div>))}</div>
-                  </div>)}
-              </>) : <Empty>{scanned ? 'No providers identified.' : 'Awaiting scan.'}</Empty>}
+              <div style={{ height: 520 }}>
+                <ResponsiveCirclePacking data={packing as any} id="id" value="value" padding={4} leavesOnly={false}
+                  colors={(n: any) => n.data.color || EMPTY} childColor={{ from: 'color', modifiers: [['brighter', 0.4]] } as any}
+                  borderWidth={1} borderColor={SURFACE} enableLabels labelsSkipRadius={18} labelTextColor={((n: any) => onFill(n.color)) as any} label={(n: any) => n.id}
+                  theme={nivoTheme as any} motionConfig="gentle"
+                  tooltip={({ id, data: dd }: any) => <div className="tip"><strong>{id}</strong>{dd.cat && <div>{dd.cat}</div>}</div>} />
+              </div>) : <Empty>{scanned ? 'No providers identified.' : 'Awaiting scan.'}</Empty>}
           </Card>
           <Card title="Evidence" sub="the exact public records">
             <div className="stack" style={{ gap: 12, maxHeight: 520, overflowY: 'auto' }}>
@@ -345,11 +371,7 @@ export default function OrgDetail() {
         </div>
       )}
 
-      {tab === 'compromise' && (<div className="stack" style={{ gap: 14 }}>
-        {catFindings(['compromise']).length > 0 && (
-          <Card title="Compromise findings" sub="owned IPs on blocklists, owned hostnames serving malware or ClickFix lures, and indicators published in threat reports">
-            <FindingList rows={catFindings(['compromise'])} />
-          </Card>)}
+      {tab === 'compromise' && (
         <Card title="Compromised & malicious IP listings in owned space" sub={`checked ${day(data.compromised.checked)} against ${Object.keys(data.compromised.feeds || {}).length} feeds`}>
           {data.compromised.matches.length ? (
             <Table rows={data.compromised.matches} cols={[
@@ -365,22 +387,14 @@ export default function OrgDetail() {
             </div>
           )}
         </Card>
-      </div>)}
+      )}
 
       {tab === 'events' && (
         <div className="stack" style={{ gap: 14 }}>
           <div className="grid g2">
             <Card title="Dark web, breaches & credential exposure"><FindingList rows={catFindings(['darkweb'])} empty="Not listed on leak sites, dark-web claims or breach catalogues; no infostealer exposure found." /></Card>
             <Card title="Incidents, disclosures, targeting & AI"><FindingList rows={catFindings(['disclosure', 'chatter', 'ai'])} empty="No disclosures, named reporting or targeting." /></Card>
-            <Card title="Provider incidents that reach this organisation" sub="provider dependency (public DNS) or named as an affected customer">
-              <FindingList rows={(data.findings as any[]).filter(f => f.rule_id === 'TP-VENDOR-INC' || f.rule_id === 'TP-NAMED-CUSTOMER')} empty="No provider this organisation uses has a breach or compromise in the last 30 days." />
-            </Card>
           </div>
-          {(data.impersonation?.total || 0) > 0 && (
-            <Card className="clickable" onClick={() => setTab('impersonation')}>
-              <div className="row" style={{ gap: 10 }}><b>{data.impersonation.total} lookalike domain{data.impersonation.total === 1 ? '' : 's'} of this brand</b>
-                <span className="muted">({data.impersonation.live} resolving) — see the Impersonation tab for lures, sources, trend and the blocklist.</span></div>
-            </Card>)}
           {stealer && (
             <Card title="Infostealer exposure" sub="Hudson Rock community data — counts only, no credentials" right={<SourceLink url={stealer.url} label="Hudson Rock" />}>
               <div className="grid g4" style={{ marginBottom: 12 }}>
@@ -422,52 +436,32 @@ export default function OrgDetail() {
                 <Check ok label="Name servers" detail={(hy.ns || []).join(', ')} url={dohUrl(d, 'NS')} />
               </div>)}
           </Card>
-          <Card title="Hygiene findings"><FindingList rows={catFindings(['hygiene'])} empty="All checked controls present." /></Card>
+          <div className="stack" style={{ gap: 14 }}>
+            <Card title="Domain lifecycle" sub="registry record via RDAP — the registrar lock and expiry date">
+              {!rdap ? <Empty>{fp.domain ? 'No registry record retrieved for this domain.' : 'Awaiting scan.'}</Empty> : (
+                <div className="feed">
+                  <Check ok={!!rdap.locked} label="Registrar transfer lock" state={rdap.locked ? 'locked' : 'not locked'}
+                    detail={(rdap.statuses || []).join(' · ') || 'no status published'} url={rdapUrl} linkLabel="RDAP record" />
+                  <Check ok={expiryDays === null || expiryDays > 90} warn={expiryDays !== null && expiryDays > 30 && expiryDays <= 90}
+                    label="Registration expiry"
+                    state={expiryDays === null ? 'unknown' : expiryDays < 0 ? `expired ${Math.abs(expiryDays)} days ago` : `${expiryDays} days left`}
+                    detail={rdap.expires ? `Expires ${String(rdap.expires).slice(0, 10)}` : undefined} url={rdapUrl} linkLabel="RDAP record" />
+                  <Check ok label="Registrar" state={rdap.registrar ? 'on record' : 'unknown'} detail={rdap.registrar || undefined} url={rdapUrl} linkLabel="RDAP record" />
+                </div>)}
+            </Card>
+            {lookalikes.length > 0 && (
+              <Card title="Lookalike domains" sub="confusable variants generated locally, then resolved through public DNS" className="flush">
+                <Table rows={lookalikes} max={25} cols={[
+                  { key: 'domain', label: 'Domain', render: (l: any) => <span className="mono">{l.domain}</span> },
+                  { key: 'mx', label: 'Accepts mail', render: (l: any) => (l.mx || []).length ? <span className="pill">MX</span> : <span className="muted">—</span> },
+                  { key: 'ips', label: 'Resolves to', render: (l: any) => <span className="muted mono">{(l.ips || []).join(', ') || '—'}</span> },
+                ]} />
+              </Card>
+            )}
+            <Card title="Hygiene findings"><FindingList rows={catFindings(['hygiene'])} empty="All checked controls present." /></Card>
+          </div>
         </div>
       )}
-
-      {tab === 'prevent' && (() => {
-        const acts: any[] = data.actions || []
-        const openA = acts.filter(a => a.open)
-        const closed = acts.filter(a => a.status === 'resolved' && a.verified_closed_at)
-        const pv = data.prevent
-        return (
-          <div className="stack" style={{ gap: 14 }}>
-            <div className="grid g4">
-              <Stat label="Open actions · now" value={openA.length} hint={`${openA.filter(a => a.level === 'critical').length} Critical · ${openA.filter(a => a.level === 'high').length} High`} />
-              <Stat label="Overdue · now" value={openA.filter(a => a.overdue).length} hint="past the act-by date of their deadline rule" />
-              <Stat label="Verified closed" value={closed.length} hint="fixes AEGIS re-observed as gone" />
-              <Stat label="Controls in place" value={pv?.scanned ? `${pv.controls.filter((c: any) => c.has).length} / ${pv.controls.filter((c: any) => c.measured).length}` : '—'} hint={pv?.scanned ? `measured passively · sector: ${pv.sector}` : 'awaiting the surface scan'} />
-            </div>
-            <div className="grid g-main-side">
-              <Card title="Preventive controls — this organisation, its sector and the estate" sub="✓ in place · ✕ missing · — not measured · bars: share of the sector and of all monitored organisations with the control">
-                {!pv?.scanned ? <Empty>Awaiting the surface scan.</Empty> : (
-                  <div className="stack" style={{ gap: 9 }}>
-                    {pv.controls.map((c: any) => (
-                      <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '22px minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, alignItems: 'center', fontSize: 12.5 }}>
-                        <b style={{ color: c.has ? 'var(--good)' : c.measured ? 'var(--high)' : 'var(--muted)' }} aria-label={c.has ? 'in place' : c.measured ? 'missing' : 'not measured'}>{c.has ? '✓' : c.measured ? '✕' : '—'}</b>
-                        <div><b>{c.label}</b><div className="muted" style={{ fontSize: 11.5 }}>prevents: {c.prevents}</div></div>
-                        <div title={`${c.sector}: ${c.sector_pct ?? '—'}% of ${c.sector_n ?? 0}`}><div className="muted" style={{ fontSize: 11 }}>sector {c.sector_pct ?? '—'}%</div>
-                          <div style={{ height: 6, background: 'var(--hair)', borderRadius: 3 }}><div style={{ width: `${c.sector_pct || 0}%`, height: '100%', background: SERIES[1], borderRadius: 3 }} /></div></div>
-                        <div title={`all monitored organisations: ${c.estate_pct ?? '—'}%`}><div className="muted" style={{ fontSize: 11 }}>estate {c.estate_pct ?? '—'}%</div>
-                          <div style={{ height: 6, background: 'var(--hair)', borderRadius: 3 }}><div style={{ width: `${c.estate_pct || 0}%`, height: '100%', background: SERIES[0], borderRadius: 3 }} /></div></div>
-                      </div>))}
-                  </div>)}
-              </Card>
-              <Card title="Prove a fix" sub="closure is verified by re-observing the public record">
-                <div className="stack" style={{ gap: 10, fontSize: 13 }}>
-                  <div>When an owner fixes something, ask AEGIS to look again. If the finding is gone, its action closes itself as <b>verified closed</b>; if it returns later, the action reopens.</div>
-                  <button className="btn primary" onClick={async () => { await api(`/orgs/${id}/scan`, { method: 'POST' }); alert('Re-check queued — the passive scan and the next pipeline run will update the actions.') }}>Re-check now</button>
-                  <a className="srclink" onClick={() => nav('/prevent')}>Every organisation's action queue →</a>
-                </div>
-              </Card>
-            </div>
-            <Card title="Actions for this organisation" sub="open first · expand a row for the playbook and history · status changes are recorded with your name">
-              {!acts.length ? <Empty>No Critical, High or Medium findings — nothing to action.</Empty>
-                : <ActionTable rows={acts} showOrg={false} onChanged={() => refetch()} />}
-            </Card>
-          </div>)
-      })()}
 
       {tab === 'findings' && (
         <Card className="flush">

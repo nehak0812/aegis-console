@@ -28,7 +28,6 @@ RULES: dict[str, tuple[str, str, str]] = {
     "VUL-KEV-EXPOSED": ("critical", "organisation", "An internet-facing host of this organisation reports a CVE that CISA lists as actively exploited (KEV)."),
     "VUL-EXPOSED-HIGH": ("high", "organisation", "An internet-facing host reports a CVE with high exploit likelihood (EPSS ≥ 10%) or a public exploit."),
     "VUL-EXPOSED":  ("medium",   "organisation", "An internet-facing host reports known CVEs (indexed by Shodan InternetDB)."),
-    "VUL-EPSS-SURGE": ("high",   "organisation", "An internet-facing host reports a CVE whose exploit likelihood (FIRST EPSS) rose sharply in the last 7 days (+20 points, or tripled to at least 10%) and is not yet confirmed exploited — patch before it lands in KEV."),
     "SURF-RISKY-PORT": ("high",  "organisation", "Remote-administration or database service exposed to the internet (e.g. RDP, SMB, Telnet, VNC, MySQL, MSSQL, PostgreSQL, MongoDB, Redis, Elasticsearch, Docker API)."),
     "SURF-EDGE-KEV": ("high",    "organisation", "Public hostnames indicate an edge/remote-access product that itself had a CISA KEV addition in the last 30 days."),
     "SURF-EDGE":    ("low",      "organisation", "Public hostnames indicate an edge / remote-access product (VPN, gateway, webmail) — inventory only."),
@@ -39,59 +38,39 @@ RULES: dict[str, tuple[str, str, str]] = {
     "HYG-DNSSEC":   ("low",      "organisation", "Domain is not DNSSEC-signed."),
     "HYG-MTASTS":   ("low",      "organisation", "No MTA-STS policy (inbound mail TLS not enforced)."),
     "HYG-CAA":      ("low",      "organisation", "No CAA record (any certificate authority may issue for the domain)."),
-    # --- domain, certificate & routing hardening (rules from the Railway deployment — ids, levels and texts kept exactly)
-    "BGP-RPKI-INVALID": ("high", "organisation", "An IP prefix registered to this organisation is announced by an origin its own ROA does not authorise (RPKI invalid — possible hijack or stale ROA)."),
-    "BGP-RPKI-NONE": ("medium",  "organisation", "An IP prefix registered to this organisation has no Route Origin Authorisation, so networks filtering on RPKI cannot tell a hijack from a legitimate announcement."),
-    "CRT-CAA-VIOLATION": ("medium", "organisation", "A certificate issued after the current CAA policy was observed names a certificate authority the policy does not authorise (possible mis-issuance or unsanctioned IT)."),
-    "CRT-EXPIRY-14": ("medium",  "organisation", "A certificate covering a live public hostname expires within 14 days (certificate transparency logs)."),
+    "HYG-SPF-LOOKUPS": ("medium", "organisation", "SPF record needs more than the 10 DNS lookups RFC 7208 allows — receivers return permerror, so SPF silently stops protecting the domain."),
+    "HYG-DKIM-NONE": ("medium",  "organisation", "No DKIM key published on any common selector, so receivers cannot verify that mail was signed by this domain."),
+    "HYG-TLSRPT":   ("low",      "organisation", "No TLS-RPT record, so failed inbound mail encryption is never reported back — inventory only."),
+    "HYG-NS-SINGLE": ("low",     "organisation", "Every authoritative nameserver is with a single provider (no DNS redundancy) — inventory only."),
+    # --- domain lifecycle (RDAP) ---------------------------------------------------------------
+    "DOM-LOCK":     ("high",     "organisation", "The primary domain carries no registrar transfer lock (clientTransferProhibited), so an unauthorised transfer could move its email and web traffic (RDAP)."),
     "DOM-EXPIRY-30": ("critical", "organisation", "The primary domain expires within 30 days; if it lapses, email and web stop and the name can be re-registered by anyone (RDAP)."),
     "DOM-EXPIRY-90": ("medium",  "organisation", "The primary domain expires within 90 days (RDAP)."),
-    "DOM-LOCK":     ("high",     "organisation", "The primary domain carries no registrar transfer lock (clientTransferProhibited), so an unauthorised transfer could move its email and web traffic (RDAP)."),
-    "HYG-DKIM-NONE": ("medium",  "organisation", "No DKIM key published on any common selector, so receivers cannot verify that mail was signed by this domain."),
-    "HYG-NS-SINGLE": ("low",     "organisation", "Every authoritative nameserver is with a single provider (no DNS redundancy) — inventory only."),
-    "HYG-SPF-LOOKUPS": ("medium", "organisation", "SPF record needs more than the 10 DNS lookups RFC 7208 allows — receivers return permerror, so SPF silently stops protecting the domain."),
-    "HYG-TLSRPT":   ("low",      "organisation", "No TLS-RPT record, so failed inbound mail encryption is never reported back — inventory only."),
-    "LOOK-LIVE":    ("medium",   "organisation", "A lookalike of this organisation's domain is registered and resolves to a live address (public DNS)."),
+    # --- certificates (Certificate Transparency) -----------------------------------------------
+    "CRT-CAA-VIOLATION": ("medium", "organisation", "A certificate issued after the current CAA policy was observed names a certificate authority the policy does not authorise (possible mis-issuance or unsanctioned IT)."),
+    "CRT-EXPIRY-14": ("medium",  "organisation", "A certificate covering a live public hostname expires within 14 days (certificate transparency logs)."),
+    # --- routing integrity (RPKI) --------------------------------------------------------------
+    "BGP-RPKI-INVALID": ("high", "organisation", "An IP prefix registered to this organisation is announced by an origin its own ROA does not authorise (RPKI invalid — possible hijack or stale ROA)."),
+    "BGP-RPKI-NONE": ("medium",  "organisation", "An IP prefix registered to this organisation has no Route Origin Authorisation, so networks filtering on RPKI cannot tell a hijack from a legitimate announcement."),
+    # --- lookalike domains (passive DNS + certificate transparency) ----------------------------
     "LOOK-MX":      ("high",     "organisation", "A lookalike of this organisation's domain is registered and accepts mail (MX record), the usual preparation for invoice fraud and credential phishing."),
+    "LOOK-LIVE":    ("medium",   "organisation", "A lookalike of this organisation's domain is registered and resolves to a live address (public DNS)."),
     "DISC-8K-90":   ("critical", "organisation", "Filed an SEC 8-K Item 1.05 (material cybersecurity incident) in the last 90 days."),
     "DISC-8K-OLD":  ("high",     "organisation", "Filed an SEC 8-K Item 1.05 (material cybersecurity incident) more than 90 days ago."),
     "INC-NAMED-30": ("high",     "organisation", "Named as the victim in cyber-incident reporting by two or more independent publishers in the last 30 days."),
     "INC-NAMED-1":  ("medium",   "organisation", "Named as the victim in cyber-incident reporting by one publisher in the last 30 days."),
     "TP-VENDOR-INC": ("high",    "organisation", "A third-party provider this organisation uses (evidenced in its public DNS) is involved in an active incident (last 30 days)."),
     "TP-CONCENTRATION": ("low",  "organisation", "Depends on a provider shared by many monitored organisations (concentration risk) — inventory only."),
-    "TP-NAMED-CUSTOMER": ("high", "organisation", "Named in reporting about a provider's breach or compromise in the last 30 days (likely an affected customer; the dependency is not visible in public DNS)."),
     "THR-SECTOR":   ("low",      "organisation", "Threat context: ransomware groups listed 10+ victims in this organisation's sector and country in the last 30 days."),
     "DISC-801":     ("medium",   "organisation", "Filed an SEC 8-K Item 8.01 mentioning a cybersecurity incident in the last 12 months."),
     "SURF-TAKEOVER": ("high",    "organisation", "A public hostname's CNAME points to a cloud resource that no longer resolves (possible subdomain takeover)."),
     "DW-LEAK-SUB":  ("high",     "organisation", "A subsidiary (per GLEIF) was named on a ransomware / extortion leak site in the last 90 days."),
     "AI-INCIDENT":  ("medium",   "organisation", "Named as deployer or developer in an AI Incident Database report in the last 12 months."),
-    # --- AI-era threats (v2.2) — AI stack -------------------------------------------------------
-    "AI-KEV-EXPOSED": ("critical", "organisation", "An internet-facing host of this organisation reports a CVE that CISA lists as actively exploited in an AI/LLM product (e.g. LiteLLM, Langflow, MLflow, Ray, n8n)."),
-    "AI-KEV-PRODUCT": ("high",   "organisation", "An owned host's software fingerprint (CPE) or public hostname indicates an AI/LLM product that has CISA KEV entries; the vulnerable version is not confirmed."),
-    "AI-EXPOSED-SERVICE": ("high", "organisation", "An owned host exposes a self-hosted AI/ML service (port and product evidence), e.g. Ollama, Ray, Gradio, Qdrant, Milvus, Jupyter, MLflow. These are often deployed without authentication. Coverage: the IPs the passive scan resolves."),
-    "AI-EXPOSED-PORT": ("medium", "organisation", "An owned host exposes a port used almost only by AI/ML services (Ollama 11434, Ray dashboard 8265, Gradio/Langflow 7860, Qdrant 6333, Milvus 19530) without product confirmation (unconfirmed)."),
-    "AI-PROVIDER-INC": ("medium", "organisation", "A generative-AI provider this organisation uses (DNS verification evidence) had a major/critical service incident or a security incident in the last 30 days."),
-    "AI-SERVICE-DNS": ("low",    "organisation", "Public DNS verification records show the organisation uses generative-AI services (inventory) — govern keys and buy through authorised channels only."),
-    "AI-HOST":      ("low",      "organisation", "Public hostnames or CNAMEs indicate AI platforms (Azure OpenAI, Ollama, Jupyter, MLflow, Langflow, LiteLLM, Open WebUI, ComfyUI, Kubeflow) — inventory."),
-    # --- impersonation & published indicators --------------------------------------------------
-    "IOC-BRAND-LIVE": ("critical", "organisation", "A domain published as an indicator in a threat report imitates this organisation's brand and still resolves in public DNS."),
-    "IOC-BRAND":    ("high",     "organisation", "A domain published as an indicator in a threat report imitates this organisation's brand (brand token + lure word)."),
-    "IOC-OWN-DOMAIN": ("high",   "organisation", "A hostname under this organisation's own registered domain is published as an indicator of compromise (compromised site, abused redirect or infrastructure)."),
-    "IOC-OWN-IP":   ("high",     "organisation", "An IP address published as an indicator of compromise falls inside this organisation's own or declared IP space."),
-    "NRD-PHISH":    ("critical", "organisation", "A newly registered domain imitating this brand (brand token + lure word) resolves and is listed on a phishing feed."),
-    "NRD-LIVE":     ("high",     "organisation", "A domain registered in the last 30 days imitates this brand (brand token + lure word) and resolves (web or mail) — phishing preparation."),
-    "NRD-MATCH":    ("medium",   "organisation", "A domain registered in the last 30 days imitates this brand (brand token + lure word); not resolving yet — watch and pre-block."),
-    "PHISH-BRAND":  ("high",     "organisation", "A phishing feed (OpenPhish, PhishTank, URLhaus) lists a live phishing URL on a lookalike of this brand in the last 14 days."),
-    "PHISH-TARGET": ("high",     "organisation", "PhishTank lists verified, online phishing pages that target this organisation's brand."),
-    # --- the organisation's website used against visitors --------------------------------------
-    "WEB-CLICKFIX": ("high",     "organisation", "A hostname under this organisation's own domain is listed (ThreatFox / URLhaus) as serving a ClickFix / fake-CAPTCHA / ClearFake lure — the site is likely compromised."),
-    "WEB-MALWARE":  ("high",     "organisation", "A hostname under this organisation's own domain is listed by URLhaus / ThreatFox as distributing malware in the last 30 days."),
-    "WEB-CMS-KEV":  ("medium",   "organisation", "An owned host runs a CMS / web platform (CPE) whose product had a CISA KEV addition in the last 90 days; version not confirmed."),
-    # --- DNS change / hijack (needs two scans) -----------------------------------------------------
-    "DNS-NS-REPLACED": ("critical", "organisation", "The domain's name-server set was fully replaced by a provider never seen for it before, and the change persisted across two scans (possible DNS hijack — verify with the registrar)."),
-    "DNS-MX-MOVED": ("high",     "organisation", "The domain's mail exchangers moved to a provider never seen for it before, and the change persisted across two scans (verify it was planned)."),
-    "DNS-DNSSEC-LOST": ("medium", "organisation", "DNSSEC was present on an earlier scan and is now absent on two consecutive scans."),
-    "DNS-CAA-REMOVED": ("medium", "organisation", "A CAA record was present on an earlier scan and has been removed on two consecutive scans."),
+    "AI-SERVICE-DNS": ("low",    "organisation", "Uses generative-AI services, evidenced by the provider's domain-verification record in public DNS — inventory only."),
+    "AI-PROVIDER-INC": ("medium", "organisation", "A generative-AI provider this organisation uses (public DNS evidence) had an AI-system incident, an AI Incident Database report or a major service incident in the last 30 days."),
+    "AI-EXPOSED-SERVICE": ("high", "organisation", "An internet-facing host of this organisation exposes a self-hosted AI or machine-learning service, identified by port and product. These are frequently deployed with no authentication. Only the hostnames the passive scan resolves are covered."),
+    "AI-EXPOSED-PORT": ("medium", "organisation", "An internet-facing host exposes a port commonly used by a self-hosted AI or machine-learning service, without product confirmation — the port alone is not proof."),
+    "AI-HOST":      ("low",      "organisation", "Public hostnames or CNAMEs indicate a self-hosted or managed AI platform — inventory only."),
     # --- vulnerabilities ---------------------------------------------------------------------
     "V-KEV-RANSOM": ("critical", "vulnerability", "In CISA KEV and known to be used in ransomware campaigns."),
     "V-KEV-NEW":    ("critical", "vulnerability", "Added to CISA KEV in the last 30 days (fresh, active exploitation)."),
@@ -106,23 +85,63 @@ RULES: dict[str, tuple[str, str, str]] = {
     "I-SUPPLY-WATCH": ("critical", "incident", "Supply-chain / provider incident and one or more monitored organisations depend on the affected provider."),
     "I-KEV-MASS":   ("critical", "incident", "Active exploitation of a product listed in CISA KEV in the last 14 days, reported by 3+ independent publishers."),
     "I-MULTI":      ("high",     "incident", "Reported by two or more independent publishers."),
-    "I-PROVIDER-REPORTED": ("medium", "incident", "A catalogued provider is reported as breached or compromised by a single publisher; customer impact is not confirmed."),
     "I-LEAK":       ("high",     "incident", "Ransomware / extortion leak-site listing (claim by the group, not yet confirmed by the victim)."),
     "I-SINGLE":     ("medium",   "incident", "Single-source report."),
     "I-INFO":       ("low",      "incident", "Informational — outage or advisory without confirmed compromise."),
-    # --- deadlines (v2.2 speed & spread): every Critical / High / Medium finding gets an "act by" date from exactly one of these
-    "DL-72H":       ("critical", "deadline", "Act within 72 hours: attackers act on this within days — a CVE exploited within 7 days of disclosure (or before it) or added to CISA KEV in the last 30 days, an exploited edge/AI product, a live lookalike or phishing page, a ClickFix lure on an owned site, access for sale, C2 in owned space, an infostealer infection, a DNS takeover signal, or surging exploit likelihood."),
-    "DL-CISA":      ("high",     "deadline", "Act by CISA's remediation due date for this recently exploited CVE, or within 7 days of first observation — whichever is sooner."),
-    "DL-7D-EXPLOITED": ("high",  "deadline", "An actively exploited product is indicated by a public hostname or software fingerprint (version not confirmed): verify and act within 7 days."),
-    "DL-7D":        ("critical", "deadline", "Critical finding: act within 7 days of first observation (AEGIS_SLA_CRITICAL)."),
-    "DL-30D":       ("high",     "deadline", "High finding: act within 30 days of first observation (AEGIS_SLA_HIGH)."),
-    "DL-90D":       ("medium",   "deadline", "Medium finding: act within 90 days of first observation (AEGIS_SLA_MEDIUM)."),
 }
 
 RISKY_PORTS = {21: "FTP", 23: "Telnet", 445: "SMB", 139: "NetBIOS", 3389: "RDP", 5900: "VNC", 5901: "VNC",
                1433: "MSSQL", 1521: "Oracle DB", 3306: "MySQL", 5432: "PostgreSQL", 27017: "MongoDB",
                6379: "Redis", 9200: "Elasticsearch", 11211: "Memcached", 2375: "Docker API",
                5985: "WinRM", 5986: "WinRM", 161: "SNMP", 623: "IPMI", 9000: "Admin panel", 10250: "Kubelet"}
+
+
+# How strongly the evidence supports a finding. This is not a probability and it never
+# changes the rule that fired — it says what kind of evidence stands behind it.
+#
+#   confirmed   — an observed record: a DNS, RDAP or certificate lookup, a CVE on a host we
+#                 resolved, an SEC filing, a domain / CIK / LEI match.
+#   likely      — a strong but indirect join: an exact name match, a product CPE without its
+#                 version, a breach whose domain matches, a CAA mismatch.
+#   unconfirmed — an inference or someone else's claim: a text mention, a product guessed from
+#                 a hostname, a forum post.
+CONFIDENCE = ("confirmed", "likely", "unconfirmed")
+DEFAULT_CONFIDENCE = "likely"
+RULE_CONFIDENCE = {
+    # observed records
+    **{r: "confirmed" for r in (
+        "HYG-DMARC-NONE", "HYG-SPF-MISSING", "HYG-SPF-SOFT", "HYG-SPF-LOOKUPS", "HYG-DKIM-NONE",
+        "HYG-DNSSEC", "HYG-MTASTS", "HYG-TLSRPT", "HYG-CAA", "HYG-NS-SINGLE",
+        "DOM-LOCK", "DOM-EXPIRY-30", "DOM-EXPIRY-90", "CRT-EXPIRY-14",
+        "BGP-RPKI-INVALID", "BGP-RPKI-NONE", "LOOK-MX", "LOOK-LIVE",
+        "SURF-TAKEOVER", "SURF-RISKY-PORT", "VUL-KEV-EXPOSED", "VUL-EXPOSED-HIGH", "VUL-EXPOSED",
+        "CMP-C2", "CMP-ABUSE", "DISC-8K-90", "DISC-8K-OLD", "DISC-801", "AI-SERVICE-DNS",
+        "AI-EXPOSED-SERVICE", "SURF-LARGE")},
+    # strong but indirect
+    **{r: "likely" for r in (
+        "CRT-CAA-VIOLATION", "BR-PUBLIC-90", "BR-PUBLIC-12M", "BR-PUBLIC-OLD",
+        "DW-STEALER-30", "DW-STEALER-EMP", "DW-STEALER-OLD", "DW-DDOS-7", "DW-DDOS-30",
+        "DW-LEAK-30", "DW-LEAK-180", "DW-LEAK-OLD", "DW-LEAK-SUB", "TP-VENDOR-INC",
+        "AI-PROVIDER-INC", "AI-HOST", "AI-INCIDENT")},
+    # inference, or someone else's claim
+    **{r: "unconfirmed" for r in (
+        "DW-ACCESS-14", "DW-FORUM-30", "DW-FORUM-OLD", "INC-NAMED-30", "INC-NAMED-1",
+        "SURF-EDGE", "SURF-EDGE-KEV", "AI-EXPOSED-PORT", "THR-SECTOR", "TP-CONCENTRATION")},
+}
+
+
+def confidence_for(rule_id: str) -> str:
+    return RULE_CONFIDENCE.get(rule_id, DEFAULT_CONFIDENCE)
+
+
+def cap_for_confidence(severity: str, confidence: str) -> str:
+    """Evidence that is only inferred or claimed never reads as Critical.
+
+    A hostname that looks like a VPN, or a forum post claiming access, may well be right —
+    but it is not the same standing as a record we resolved, and presenting it at the top
+    level costs the reader trust in every Critical on the page.
+    """
+    return "high" if confidence == "unconfirmed" and severity == "critical" else severity
 
 
 def rule(rule_id: str) -> tuple[str, str]:
