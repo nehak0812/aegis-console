@@ -45,10 +45,18 @@ async def _basic_auth(request, call_next):
                         headers={"WWW-Authenticate": 'Basic realm="AEGIS", charset="UTF-8"'})
 
 
+_START_ERROR = ""  # traceback from a failed scheduler start-up, reported by /api/health
+
+
 @app.get("/api/health")
 def health():
     """Liveness for Railway / any orchestrator: the process is up and the database answers."""
-    return {"ok": True, "version": VERSION, "orgs": db.scalar("SELECT count(*) FROM org"), "time": db.now()}
+    out = {"ok": True, "version": VERSION, "orgs": db.scalar("SELECT count(*) FROM org"), "time": db.now()}
+    if _START_ERROR:
+        # still 200: the process is alive and serving, and an orchestrator that kills it here would
+        # replace a diagnosable service with a blank 502. Collection is degraded, and says so.
+        out.update(ok=False, degraded="scheduler failed to start", error=_START_ERROR)
+    return out
 
 
 def ts(days: float) -> str:
@@ -61,7 +69,16 @@ def ph(n: int) -> str:
 
 @app.on_event("startup")
 def _start():
-    scheduler.start()
+    global _START_ERROR
+    try:
+        scheduler.start()
+    except Exception:
+        # A start-up exception here would otherwise take the whole process down and leave nothing
+        # to ask what went wrong. Serve the console on the data already in the database, and put the
+        # traceback where it can be read.
+        import traceback
+        _START_ERROR = traceback.format_exc()[-2000:]
+        print("[startup] scheduler.start() failed:\n" + _START_ERROR, flush=True)
 
 
 # ------------------------------------------------------------------ status & navigation

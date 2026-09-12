@@ -1,5 +1,6 @@
 """Autonomous operation: every source runs on its own cadence, the intelligence pipeline re-runs after collection,
 and a catch-up pass on start-up brings stale sources current. No human action is needed to keep data live."""
+import os
 import random
 import threading
 import time
@@ -47,7 +48,20 @@ def _stale(src_id: str) -> bool:
     return datetime.now(timezone.utc) - last > timedelta(minutes=s["cadence_min"] or 60)
 
 
+# A container that has just been promoted is serving live traffic while catch-up runs. On a version
+# whose sources are all stale at once (a first boot after an upgrade) that is dozens of collectors and
+# several whole-database pipeline passes starting the instant the health check goes green — enough
+# CPU and memory to make the process unresponsive, or to have the platform kill it, before it has
+# served anything. Give it a quiet period first, then leave a breath between sources so request
+# threads get the interpreter back. Both are overridable for local runs, where neither matters.
+CATCH_UP_DELAY_S = float(os.environ.get("AEGIS_CATCH_UP_DELAY", "180"))
+CATCH_UP_GAP_S = float(os.environ.get("AEGIS_CATCH_UP_GAP", "2"))
+
+
 def catch_up() -> None:
+    if CATCH_UP_DELAY_S > 0:
+        print(f"[scheduler] catch-up starts in {CATCH_UP_DELAY_S:.0f}s — serving traffic first", flush=True)
+        time.sleep(CATCH_UP_DELAY_S)
     db.x("UPDATE source SET status='PENDING' WHERE status='RUNNING'")
     ran = 0
     for sid in CATCH_UP_ORDER:
@@ -57,6 +71,7 @@ def catch_up() -> None:
             ran += 1
             if sid in ("sec_8k", "pub_news", "surface"):  # early pipeline passes so the console fills quickly
                 run_pipeline()
+            time.sleep(CATCH_UP_GAP_S)
     run_pipeline()
     print(f"[scheduler] catch-up complete ({ran} sources refreshed)")
 
